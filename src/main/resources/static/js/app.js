@@ -1,0 +1,178 @@
+const { createApp, ref, computed, onMounted, onBeforeUnmount } = Vue
+
+createApp({
+    setup() {
+        const navItems = [
+            { id: 'dashboard', label: '监控大屏', icon: '▦' },
+            { id: 'devices', label: '设备信息', icon: '▣' },
+            { id: 'ai', label: 'AI识别记录', icon: '◎' },
+            { id: 'alerts', label: '实时告警中心', icon: '!' },
+            { id: 'history', label: '告警处置记录', icon: '✓' }
+        ]
+        const activePage = ref('dashboard')
+        const sidebarOpen = ref(false)
+        const nowText = ref('')
+        const dashboard = ref({ onlineDevices: 0, deviceCount: 0, alarmCount: 0, pendingAlarms: 0, aiEvents: 0 })
+        const alarms = ref([])
+        const devices = ref([])
+        const loading = ref(false)
+        const analyzing = ref(false)
+        const socketConnected = ref(false)
+        const error = ref('')
+        const toast = ref('')
+        const lastAiResult = ref('')
+        const aiForm = ref({ imageUrl: '', area: 'A区西门', deviceCode: 'CAM-001' })
+        let clockTimer = null
+        let socket = null
+        let reconnectTimer = null
+        let toastTimer = null
+
+        const latestAlarms = computed(() => alarms.value.slice(0, 6))
+        const aiAlarms = computed(() => alarms.value.filter(item => item.source === 'AI视觉分析'))
+        const activeAlarms = computed(() => alarms.value.filter(item => item.status !== '已关闭'))
+        const closedAlarms = computed(() => alarms.value.filter(item => item.status === '已关闭'))
+
+        async function request(path, options = {}) {
+            const response = await fetch(path, {
+                headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+                ...options
+            })
+            if (!response.ok) {
+                let message = `${path} 请求失败：HTTP ${response.status}`
+                try {
+                    const body = await response.json()
+                    if (body.message) message = body.message
+                } catch (_) {
+                    // 使用默认错误信息。
+                }
+                throw new Error(message)
+            }
+            return response.json()
+        }
+
+        async function loadAll() {
+            loading.value = true
+            error.value = ''
+            try {
+                const [dashboardData, alarmData, deviceData] = await Promise.all([
+                    request('/api/dashboard'), request('/api/alarms'), request('/api/devices')
+                ])
+                dashboard.value = dashboardData
+                alarms.value = alarmData
+                devices.value = deviceData
+            } catch (exception) {
+                error.value = `数据加载失败：${exception.message}`
+            } finally {
+                loading.value = false
+            }
+        }
+
+        async function updateAlarm(id, status) {
+            try {
+                await request(`/api/alarms/${id}/status`, {
+                    method: 'PATCH',
+                    body: JSON.stringify({ status })
+                })
+                showToast(`告警已更新为“${status}”`)
+                await loadAll()
+            } catch (exception) {
+                error.value = `告警更新失败：${exception.message}`
+            }
+        }
+
+        async function analyzeImage() {
+            analyzing.value = true
+            error.value = ''
+            lastAiResult.value = ''
+            try {
+                const result = await request('/api/ai/analyze', {
+                    method: 'POST',
+                    body: JSON.stringify(aiForm.value)
+                })
+                const objectText = result.objects.length
+                    ? result.objects.map(item => `${item.class} ${(item.conf * 100).toFixed(1)}%`).join('、')
+                    : '未识别到目标'
+                lastAiResult.value = `识别结果：${objectText}；生成 ${result.alarms.length} 条业务告警。`
+                showToast('AI 识别已完成')
+                await loadAll()
+            } catch (exception) {
+                error.value = `AI识别失败：${exception.message}`
+            } finally {
+                analyzing.value = false
+            }
+        }
+
+        function connectSocket() {
+            clearTimeout(reconnectTimer)
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+            socket = new WebSocket(`${protocol}//${location.host}/ws/alerts`)
+            socket.onopen = () => { socketConnected.value = true }
+            socket.onmessage = async event => {
+                try {
+                    const message = JSON.parse(event.data)
+                    const alarm = message.alarm || {}
+                    showToast(message.event === 'new-alarm' ? `收到新告警：${alarm.type || '未知类型'}` : `告警状态已更新：${alarm.status || ''}`)
+                    await loadAll()
+                } catch (_) {
+                    await loadAll()
+                }
+            }
+            socket.onerror = () => { socketConnected.value = false }
+            socket.onclose = () => {
+                socketConnected.value = false
+                reconnectTimer = setTimeout(connectSocket, 3000)
+            }
+        }
+
+        function selectPage(page) {
+            activePage.value = page
+            sidebarOpen.value = false
+            error.value = ''
+        }
+
+        function showToast(message) {
+            toast.value = message
+            clearTimeout(toastTimer)
+            toastTimer = setTimeout(() => { toast.value = '' }, 3200)
+        }
+
+        function updateClock() {
+            nowText.value = new Date().toLocaleString('zh-CN', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+            }).replaceAll('/', '-')
+        }
+
+        function formatTime(value) {
+            return value ? value.replace('T', ' ').slice(0, 19) : '—'
+        }
+
+        function levelClass(level) {
+            return level === '高' ? 'high' : level === '中' ? 'medium' : 'low'
+        }
+
+        function deviceAbbr(type) {
+            return type === '摄像头' ? 'CAM' : type === '门禁' ? 'ACS' : type === '烟感' ? 'SMK' : 'DEV'
+        }
+
+        onMounted(() => {
+            updateClock()
+            clockTimer = setInterval(updateClock, 1000)
+            loadAll()
+            connectSocket()
+        })
+
+        onBeforeUnmount(() => {
+            clearInterval(clockTimer)
+            clearTimeout(reconnectTimer)
+            clearTimeout(toastTimer)
+            if (socket) socket.close()
+        })
+
+        return {
+            navItems, activePage, sidebarOpen, nowText, dashboard, alarms, devices, loading, analyzing,
+            socketConnected, error, toast, lastAiResult, aiForm, latestAlarms, aiAlarms, activeAlarms,
+            closedAlarms, loadAll, updateAlarm, analyzeImage, selectPage, formatTime, levelClass, deviceAbbr
+        }
+    }
+}).mount('#app')

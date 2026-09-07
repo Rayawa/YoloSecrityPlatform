@@ -1,0 +1,9 @@
+target/
+.idea/
+*.iml
+.DS_Store
+
+ai-service/.venv/
+ai-service/.runtime/
+ai-service/__pycache__/
+ai-service/runs/
