@@ -7,8 +7,9 @@ import java.util.List;
  *
  * @param totalFrames 视频总帧数
  * @param frames      抽帧识别结果
+ * @param composite   所有帧横向拼接的标注长图（JPEG base64，可空）
  */
-public record AiVideoDetectionResponse(int totalFrames, List<AiVideoFrame> frames) {
+public record AiVideoDetectionResponse(int totalFrames, List<AiVideoFrame> frames, String composite) {
     public AiVideoDetectionResponse {
         frames = frames == null ? List.of() : List.copyOf(frames);
     }

@@ -61,10 +61,11 @@ public class AiVisionService {
         }
 
         List<AiDetectionObject> objects = detection == null ? List.of() : detection.objects();
+        String annotated = detection == null ? null : detection.annotated();
         AlarmRuleMapper.MappingResult result = alarmService.createFromDetections(
-                objects, request.area(), request.deviceCode(), request.imageUrl()
+                objects, request.area(), request.deviceCode(), request.imageUrl(), annotated
         );
-        return new AiAnalyzeResponse(objects, result.alarms(), detection == null ? null : detection.annotated());
+        return new AiAnalyzeResponse(objects, result.alarms(), annotated);
     }
 
     public AiVideoResponse analyzeVideo(MultipartFile file, String area, String deviceCode) {
@@ -92,7 +93,8 @@ public class AiVisionService {
             merged.merge(key, obj, (existing, incoming) -> existing.conf() >= incoming.conf() ? existing : incoming);
         }));
         AlarmRuleMapper.MappingResult result = alarmService.createFromDetections(
-                new ArrayList<>(merged.values()), area, deviceCode, file.getOriginalFilename()
+                new ArrayList<>(merged.values()), area, deviceCode, file.getOriginalFilename(),
+                video == null ? null : video.composite()
         );
         return new AiVideoResponse(frames, result.alarms(), result.skipped());
     }

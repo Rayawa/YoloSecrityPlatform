@@ -51,6 +51,11 @@ public class Alarm {
     private String detail;
 
     /**
+     * 标注图/视频帧拼接图路径（如 /uploads/xxx.jpg，可空）
+     */
+    private String imagePath;
+
+    /**
      * 事件发生时间
      */
     private Date eventTime;

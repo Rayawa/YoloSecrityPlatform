@@ -131,7 +131,7 @@ public class ApiController {
     @PostMapping("/ai/event")
     public AiEventResponse receiveAiEvent(@RequestBody AiEventRequest request) {
         AlarmRuleMapper.MappingResult result = alarmService.createFromDetections(
-                request.objects(), request.area(), request.deviceCode(), request.image()
+                request.objects(), request.area(), request.deviceCode(), request.image(), request.annotated()
         );
         return new AiEventResponse(result.alarms(), result.skipped());
     }

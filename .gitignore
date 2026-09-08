@@ -8,3 +8,5 @@ ai-service/.runtime/
 ai-service/__pycache__/
 ai-service/runs/
 logs/
+uploads/
+/ai-service/ai-watch/

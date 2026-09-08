@@ -28,13 +28,15 @@ public interface AlarmService extends IService<Alarm> {
     /**
      * 按告警规则把识别结果映射为告警并入库。
      *
+     * @param imageData 标注图 base64（可空），保存到 uploads/ 后写入告警 imagePath
      * @return 映射结果（含被跳过的目标识别异常类名）
      */
     AlarmRuleMapper.MappingResult createFromDetections(
             List<AiDetectionObject> detections,
             String area,
             String deviceCode,
-            String imageUrl
+            String imageUrl,
+            String imageData
     );
 
 }

@@ -44,7 +44,8 @@
 | AI 识别记录 | 填图片地址发起 YOLO 识别,查看识别对象与映射出的告警 |
 | 检测框图 | 识别结果附带带检测框的标注图,页面直接展示"模型看到了什么" |
 | 视频识别 | 上传视频自动抽帧(最多 5 帧)逐帧识别,带框帧图横向展示,汇总生成告警 |
-| 目录自动识别 | `ai-watch` 文件夹投图,2~3 秒内自动识别、推送告警、归档到 processed/(附带标注图) |
+| 告警卡片 | 告警中心/处置记录为卡片布局,每张卡片带现场标注图或视频帧拼接图 |
+| 目录自动识别 | `ai-watch` 文件夹投**图片或视频**(mp4/avi/mov),自动识别、推送告警、归档到 processed/(附带标注图,视频为帧拼接长图) |
 | 实时告警中心 | 待处置 / 处置中的告警,WebSocket 自动刷新,支持处置状态流转 |
 | 告警处置记录 | 已关闭告警的历史台账 |
 | WebSocket 推送 | 新告警与状态变更实时广播,顶部显示通道连接状态 |
@@ -127,7 +128,7 @@ brew services start mysql@8.0
 mysql -h127.0.0.1 -P3306 -uroot -proot < sql/mysql8-security-monitor.sql
 ```
 
-脚本会创建数据库 `security_monitor` 以及 `device`、`alarm` 两张表,并插入示例设备与告警,可重复执行(示例行 `INSERT IGNORE` 不会覆盖已有数据;改了示例等级后需清空 alarm 表再导入才会生效)。
+脚本会创建数据库 `security_monitor` 以及 `device`、`alarm` 两张表,并插入示例设备与告警,可重复执行(示例行 `INSERT IGNORE` 不会覆盖已有数据;改了示例等级后需清空 alarm 表再导入才会生效)。脚本自带旧库兼容段——**老库重新执行一次脚本即可补上 `image_path` 列**(告警标注图路径),无需手工 ALTER。
 
 默认连接 `127.0.0.1:3306/security_monitor`,账号密码 `root/root`。参数不同时用环境变量覆盖(所有配置项都支持,见下文"配置项"):
 
@@ -156,6 +157,17 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17 mvn spring-boot:run
 | `ws://localhost:423/ws/alerts` | WebSocket 实时告警通道 |
 
 修改端口:`SERVER_PORT=8888 mvn spring-boot:run`。
+
+**局域网共享**:平台与 AI 服务默认监听所有网卡,同一 Wi-Fi 下的手机/其他电脑可直接访问。查本机局域网 IP(`ipconfig getifaddr en0`,或直接看 `./start-all.sh` 结尾打印的地址):
+
+```
+http://192.168.0.251:423        # 其他设备浏览器访问管理平台
+http://192.168.0.251:8000/health # 其他设备访问 AI 服务健康检查
+```
+
+- 页面、接口、WebSocket 均同源(都由平台托管),跨设备访问无需额外配置;
+- 其他设备访问被拒时,检查 macOS「系统设置 → 网络 → 防火墙」是否放行 Java/Python 入站连接;
+- AI 服务推送给平台默认用 `127.0.0.1:423`(两者同机部署),若 AI 服务跑在另一台机器上,用 `AI_PLATFORM_URL=http://平台IP:423` 覆盖。
 
 ### 3. 启动 AI 视觉分析服务(可选,用于真实图片识别与目录自动识别)
 
@@ -208,8 +220,8 @@ curl -X POST http://localhost:423/api/alarms/1/handle    # 处置中 → 已关�
 ### 5. 目录自动识别演示(模拟摄像头,第八章系统集成)
 
 1. 先启动平台(第 2 步),再启动 AI 服务(第 3 步)——顺序不要反,否则 AI 服务推送时平台还没起来,图片会在约 10 秒重试耗尽后被归档;
-2. 把任意 JPG/PNG 图片(如包含人、车、烟火的场景图)复制到 `ai-service/ai-watch/` 文件夹;
-3. AI 服务约 2 秒内自动扫描识别,并 `POST /api/ai/event` 推送给平台;观察 AI 服务日志 `[ai-watch] xxx.jpg：新增 N 条告警,跳过 [...]`;
+2. 把任意 JPG/PNG 图片(如包含人、车、烟火的场景图)或 MP4/AVI/MOV 视频(模拟摄像头录像)复制到 `ai-service/ai-watch/` 文件夹;
+3. AI 服务约 2 秒内自动扫描识别,并 `POST /api/ai/event` 推送给平台;观察 AI 服务日志 `[ai-watch] xxx.jpg：新增 N 条告警,跳过 [...]`(视频会均匀抽帧后合并对象,一次推送);
 4. 浏览器大屏弹出新告警,告警中心出现对应记录(来源"AI视觉分析");
 5. 查看 `ai-service/ai-watch/processed/`,处理完的图片已自动归档到此处。
 
@@ -296,12 +308,14 @@ AI 服务侧:
 ## 常见问题
 
 - **告警数据不刷新 / 顶栏提示"实时通道重连中"**:确认页面经 `http://localhost:423` 访问,且后端在运行;WebSocket 断线后每 3 秒自动重连。
-- **新告警弹窗**:点击弹窗中的"立即处置 →"会跳转到实时告警中心并高亮该告警行 4 秒。
+- **新告警弹窗**:点击弹窗中的"立即处置 →"会跳转到实时告警中心并高亮该告警 4 秒。
+- **告警卡片没有图**:老告警是加图片功能前产生的,本来就没有现场图;新告警(图片/视频识别、ai-watch 投图)才带图。标注图落盘在 `uploads/` 目录(已 gitignore),删除后卡片图会 404。
 - **视频识别报"AI识别服务不可用"或 422**:确认 AI 服务已启动且版本是新的(需 `pip install -r requirements.txt` 补 opencv-python,重启 `python server.py`)。
 - **页面按钮报 404 / 时间显示差 8 小时**:前端 js 有改动而浏览器还在用缓存的旧版本,硬刷新(macOS 按 `Cmd+Shift+R`)或清缓存后重试;时间差 8 小时也可能是浏览器缓存了旧版 `formatTime`。
 - **AI 识别报"AI识别服务不可用"**:第 3 步的 `python server.py` 未启动,或 `AI_SERVICE_URL` 指向错误。
 - **`com.mysql.cj.jdbc.exceptions...` 连接失败**:MySQL 未启动或账号密码不对,检查第 1 步及数据库环境变量。
 - **端口 423 被占用**:改用 `SERVER_PORT=8888 mvn spring-boot:run`,页面地址同步修改。
+- **局域网其他设备打不开**:先确认手机与电脑在同一 Wi-Fi;再看 macOS「系统设置 → 网络 → 防火墙」是否拦截了入站连接(Java 与 Python 都要放行);最后确认访问的是 `http://<局域网IP>:423` 而不是 localhost。
 - **识别到对象但没有生成告警**:分两类——(1) 识别出的是未归类的目标(如 traffic light、chair、bench 等),属"目标识别异常"被设计性跳过,只出现在 `/api/ai/event` 响应的 `skipped` 清单中;(2) 已知目标但置信度低于阈值(`YOLO_CONFIDENCE=0.45`)会被 AI 服务过滤,可调低阈值。
 - **投图到 ai-watch 后没有反应**:确认 AI 服务已启动且平台先于 AI 服务启动;检查 AI 服务日志的 `[ai-watch]` 输出;平台以 Docker 部署时检查 `AI_PLATFORM_URL` 是否指向 8080;处理失败的图片达到重试上限后会被归档到 `processed/`(日志有记录)。
 

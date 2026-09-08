@@ -54,6 +54,10 @@ WATCH_INTERVAL = float(os.getenv("WATCH_INTERVAL", "2"))          # 轮询间隔
 WATCH_FILE_MIN_AGE = float(os.getenv("WATCH_FILE_MIN_AGE", "1"))  # 文件最短静置时间，防止处理半写入文件
 WATCH_MAX_ATTEMPTS = int(os.getenv("WATCH_MAX_ATTEMPTS", "5"))    # 单张图片失败重试上限
 
+# ai-watch 目录支持的文件类型：图片 + 视频（视频抽帧识别）
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png")
+VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov")
+
 logger = logging.getLogger("ai-watch")
 _stop_event = threading.Event()
 _attempts: dict[str, int] = {}
@@ -210,6 +214,62 @@ def to_base64_jpeg(image: Image.Image, max_width: int = 640) -> str:
     return base64.b64encode(buffer.getvalue()).decode()
 
 
+def composite_images(images: list[Image.Image]) -> Image.Image:
+    """把多帧标注图横向拼接成一张长图（统一高度），返回 PIL 图。"""
+    height = min(image.height for image in images)
+    resized = [
+        image.resize((round(image.width * height / image.height), height)) for image in images
+    ]
+    canvas = Image.new("RGB", (sum(image.width for image in resized), height), "white")
+    offset = 0
+    for image in resized:
+        canvas.paste(image, (offset, 0))
+        offset += image.width
+    return canvas
+
+
+def composite_frames(images: list[Image.Image], max_width: int = 1280) -> str:
+    """把多帧标注图横向拼接成一张长图，返回 JPEG base64。"""
+    return to_base64_jpeg(composite_images(images), max_width=max_width)
+
+
+def detect_video_frames(
+    path: Path, confidence: float, max_frames: int = 5
+) -> tuple[list[dict], list[Image.Image], int]:
+    """解码视频、均匀抽取最多 max_frames 帧逐帧推理。
+
+    返回 (帧结果列表, 带框帧图列表, 视频总帧数)。帧结果含 frame/objects/annotated(base64)。
+    """
+    capture = cv2.VideoCapture(str(path))
+    if not capture.isOpened():
+        raise ValueError("无法解码视频文件（支持的格式：mp4/avi/mov 等）")
+    try:
+        total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        count = min(max_frames, total) if total > 0 else max_frames
+        # 均匀抽帧：总帧数已知时按比例分布；未知时从头读 count 帧
+        frame_indices = [round(total * i / count) for i in range(count)] if total > 0 else list(range(count))
+        frames: list[dict] = []
+        annotated_images: list[Image.Image] = []
+        for index in frame_indices:
+            if total > 0:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+            ok, frame = capture.read()
+            if not ok:
+                continue
+            image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            result = detect_source(image, confidence)
+            annotated = draw_boxes(image, result["objects"])
+            annotated_images.append(annotated)
+            frames.append({
+                "frame": index,
+                "objects": result["objects"],
+                "annotated": to_base64_jpeg(annotated),
+            })
+        return frames, annotated_images, total
+    finally:
+        capture.release()
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -280,52 +340,35 @@ async def detect_video(
     """上传视频：均匀抽取最多 max_frames 帧逐帧推理，返回带框图的帧列表。"""
     suffix = Path(file.filename or "upload.mp4").suffix or ".mp4"
     path: Path | None = None
-    capture = None
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temporary:
             temporary.write(await file.read())
             path = Path(temporary.name)
-        capture = cv2.VideoCapture(str(path))
-        if not capture.isOpened():
-            raise HTTPException(status_code=422, detail="无法解码视频文件（支持的格式：mp4/avi/mov 等）")
-        total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-        count = min(max_frames, total) if total > 0 else max_frames
-        # 均匀抽帧：总帧数已知时按比例分布；未知时从头读 count 帧
-        frame_indices = [round(total * i / count) for i in range(count)] if total > 0 else list(range(count))
-        frames: list[dict] = []
-        for index in frame_indices:
-            if total > 0:
-                capture.set(cv2.CAP_PROP_POS_FRAMES, index)
-            ok, frame = capture.read()
-            if not ok:
-                continue
-            image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-            result = detect_source(image, confidence)
-            frames.append({
-                "frame": index,
-                "objects": result["objects"],
-                "annotated": to_base64_jpeg(draw_boxes(image, result["objects"])),
-            })
-        return {"totalFrames": total, "frames": frames}
+        frames, annotated_images, total = detect_video_frames(path, confidence, max_frames)
+        # 所有帧拼接成一张长图，供告警卡片直接展示
+        composite = composite_frames(annotated_images) if annotated_images else None
+        return {"totalFrames": total, "frames": frames, "composite": composite}
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"视频识别失败：{exc}") from exc
     finally:
-        if capture is not None:
-            capture.release()
         if path is not None:
             path.unlink(missing_ok=True)
 
 
 def scan_watch_directory_once() -> None:
-    """扫描一轮 ai-watch 目录：识别、推送平台、归档（或计入重试）。"""
+    """扫描一轮 ai-watch 目录：识别、推送平台、归档（或计入重试）。
+
+    支持图片（jpg/jpeg/png）与视频（mp4/avi/mov）：视频均匀抽帧推理后，
+    合并所有帧对象（同类去重保留最高置信度），用帧拼接长图作为标注图推送。
+    """
     WATCH_DIR.mkdir(parents=True, exist_ok=True)
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     names = sorted(
         name
         for name in os.listdir(WATCH_DIR)
-        if name.lower().endswith((".jpg", ".jpeg", ".png"))
+        if name.lower().endswith(IMAGE_EXTENSIONS + VIDEO_EXTENSIONS)
         and (WATCH_DIR / name).is_file()      # 只扫顶层文件，天然跳过 processed/ 子目录
     )
     for name in names:
@@ -335,12 +378,25 @@ def scan_watch_directory_once() -> None:
             if time.time() - source.stat().st_mtime < WATCH_FILE_MIN_AGE:
                 continue
             # 本地文件直接推理，不走 /detect 的 URL 下载路径（无 SSRF 面）
-            image = Image.open(source).convert("RGB")
-            objects = detect_source(image, CONFIDENCE)["objects"]
+            if source.suffix.lower() in VIDEO_EXTENSIONS:
+                frames, annotated_images, _ = detect_video_frames(source, CONFIDENCE)
+                merged: dict[str, dict] = {}
+                for frame in frames:
+                    for obj in frame["objects"]:
+                        key = f"{obj['class']}|{obj['model']}"
+                        if key not in merged or obj["conf"] > merged[key]["conf"]:
+                            merged[key] = obj
+                objects = sorted(merged.values(), key=lambda item: item["conf"], reverse=True)
+                annotated = composite_images(annotated_images) if annotated_images else None
+            else:
+                image = Image.open(source).convert("RGB")
+                objects = detect_source(image, CONFIDENCE)["objects"]
+                annotated = draw_boxes(image, objects)
+            # 推送时带上标注图，平台入库时保存并展示在告警卡片中
             response = requests.post(
                 f"{AI_PLATFORM_URL}/api/ai/event",
-                json={"image": name, "objects": objects},
-                timeout=(5, 30),
+                json={"image": name, "objects": objects, "annotated": to_base64_jpeg(annotated, max_width=1280)},
+                timeout=(5, 60),
             )
             response.raise_for_status()
             body = response.json()
@@ -350,8 +406,9 @@ def scan_watch_directory_once() -> None:
                 flush=True,
             )
             shutil.move(str(source), str(PROCESSED_DIR / name))
-            # 顺带保存带检测框的标注图，便于回看"模型看到了什么"
-            draw_boxes(image, objects).save(PROCESSED_DIR / f"annotated_{name}")
+            # 顺带保存带检测框的标注图（视频为帧拼接长图），便于回看"模型看到了什么"
+            if annotated is not None:
+                annotated.save(PROCESSED_DIR / f"annotated_{Path(name).stem}.jpg")
             _attempts.pop(str(source), None)
         except Exception as exc:
             # 瞬时故障（平台未启动、网络抖动、文件损坏）重试；
@@ -359,7 +416,7 @@ def scan_watch_directory_once() -> None:
             _attempts[str(source)] = _attempts.get(str(source), 0) + 1
             if _attempts[str(source)] >= WATCH_MAX_ATTEMPTS:
                 print(
-                    f"[ai-watch] {name} 连续失败 {WATCH_MAX_ATTEMPTS} 次，归档失败图片：{exc}",
+                    f"[ai-watch] {name} 连续失败 {WATCH_MAX_ATTEMPTS} 次，归档失败文件：{exc}",
                     flush=True,
                 )
                 try:
@@ -387,4 +444,5 @@ def watch_loop() -> None:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # 0.0.0.0 绑定所有网卡：局域网内其他设备也能访问识别服务
+    uvicorn.run(app, host=os.getenv("HOST", "0.0.0.0"), port=8000)

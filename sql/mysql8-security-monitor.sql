@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS `alarm` (
     `status` VARCHAR(255) NOT NULL COMMENT '处置状态：待处置、处置中、已关闭',
     `source` VARCHAR(255) NOT NULL COMMENT '告警来源',
     `detail` VARCHAR(500) NOT NULL COMMENT '识别结果或告警详情',
+    `image_path` VARCHAR(500) NULL COMMENT '标注图或视频帧拼接图路径（如 /uploads/xxx.jpg），可空',
     `event_time` DATETIME(6) NOT NULL COMMENT '事件发生时间',
     PRIMARY KEY (`id`),
     KEY `idx_alarm_event_time` (`event_time`),
@@ -50,6 +51,15 @@ CREATE TABLE IF NOT EXISTS `alarm` (
 
 -- 兼容已执行过旧版脚本的数据库，扩大详情字段以容纳模型结果和图片地址。
 ALTER TABLE `alarm` MODIFY COLUMN `detail` VARCHAR(500) NOT NULL COMMENT '识别结果或告警详情';
+-- 兼容旧库：没有 image_path 列时补上（标注图/视频帧路径）；幂等，重复执行无副作用。
+SET @col_exists := (SELECT COUNT(*) FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = 'security_monitor' AND TABLE_NAME = 'alarm' AND COLUMN_NAME = 'image_path');
+SET @ddl := IF(@col_exists = 0,
+    'ALTER TABLE `alarm` ADD COLUMN `image_path` VARCHAR(500) NULL COMMENT ''标注图或视频帧拼接图路径（如 /uploads/xxx.jpg），可空''',
+    'SELECT 1');
+PREPARE stmt FROM @ddl;
+EXECUTE stmt;
+DEALLOCATE PREPARE stmt;
 
 -- 测试设备数据。
 -- 固定主键配合 INSERT IGNORE，使脚本可以重复执行。

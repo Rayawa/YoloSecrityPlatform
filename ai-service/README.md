@@ -15,6 +15,8 @@ python server.py
 
 健康检查：`curl http://127.0.0.1:8000/health`
 
+服务默认监听所有网卡（`0.0.0.0`），局域网内其他设备可通过 `http://<本机IP>:8000/health` 访问；只想本机访问时用 `HOST=127.0.0.1 python server.py` 启动。
+
 ## 推理接口
 
 ```bash
@@ -43,7 +45,7 @@ Intel Mac 或 MPS 不可用时，将 `--device mps` 改为 `--device cpu`。训�
 
 ## 目录自动识别(第八章系统集成:模拟摄像头)
 
-识别服务启动时会在后台常驻一个扫描线程,监听 `ai-service/ai-watch/` 文件夹:把任意 JPG/PNG 图片放进该文件夹(模拟摄像头画面),约 2 秒内自动识别,并把结果 `POST /api/ai/event` 推送给管理平台;处理完成的图片自动归档到 `ai-watch/processed/`。
+识别服务启动时会在后台常驻一个扫描线程,监听 `ai-service/ai-watch/` 文件夹:把任意 JPG/PNG 图片或 MP4/AVI/MOV 视频放进该文件夹(模拟摄像头画面/录像),约 2 秒内自动识别,并把结果 `POST /api/ai/event` 推送给管理平台;处理完成的文件自动归档到 `ai-watch/processed/`。视频会均匀抽取最多 5 帧逐帧识别、合并对象后一次性推送,标注图为帧拼接长图(`processed/annotated_原名.jpg`)。
 
 ```bash
 # 先启动管理平台(端口 423),再启动识别服务

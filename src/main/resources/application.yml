@@ -14,3 +14,7 @@ spring:
 
 ai:
   service-url: ${AI_SERVICE_URL:http://127.0.0.1:8000}
+
+alarm:
+  # 告警标注图落盘目录（相对运行目录），通过 /uploads/** 对外提供访问
+  image-dir: ${IMAGE_DIR:uploads}

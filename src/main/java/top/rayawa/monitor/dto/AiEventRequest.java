@@ -9,12 +9,14 @@ import java.util.List;
  * @param area       区域（可选，缺省由规则层填"未指定区域"）
  * @param deviceCode 设备编号（可选）
  * @param objects    识别出的对象列表
+ * @param annotated  带检测框的标注图（JPEG base64，可选；平台保存后展示在告警卡片）
  */
 public record AiEventRequest(
         String image,
         String area,
         String deviceCode,
-        List<AiDetectionObject> objects
+        List<AiDetectionObject> objects,
+        String annotated
 ) {
     public AiEventRequest {
         objects = objects == null ? List.of() : List.copyOf(objects);

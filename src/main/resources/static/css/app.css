@@ -142,6 +142,22 @@ tbody tr:hover td { background: #f9fbfe; }
 .action-cell .close-button { border-color: #e1c0c0; color: #bd4f4f; background: #fff7f7; }
 .empty-state { padding: 42px 22px !important; color: #94a2b2 !important; text-align: center !important; }
 
+.alarm-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+.alarm-cards-empty { grid-column: 1 / -1; }
+.alarm-card { display: flex; flex-direction: column; overflow: hidden; border: 1px solid #dfe6ee; border-radius: 8px; background: #fff; }
+.alarm-card-image { height: 170px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: #f4f7fa; }
+.alarm-card-image img { width: 100%; height: 100%; object-fit: cover; }
+.alarm-card-placeholder { color: #93a4ba; font-size: 13px; }
+.alarm-card-body { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px 14px; }
+.alarm-card-head { display: flex; align-items: center; justify-content: space-between; }
+.alarm-card-head strong { color: #24364e; font-size: 15px; }
+.alarm-card-meta { margin: 0; color: #7d8ea6; font-size: 12px; }
+.alarm-card-detail { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; margin: 0; color: #536a86; font-size: 13px; line-height: 1.6; }
+.alarm-card-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 2px; }
+.alarm-card-actions { display: flex; gap: 8px; }
+.alarm-card-actions button { padding: 6px 11px; border: 1px solid #b7cae2; border-radius: 5px; color: #2c5f9f; background: #f5f9ff; font-size: 12px; cursor: pointer; }
+.alarm-card-actions .close-button { border-color: #e1c0c0; color: #bd4f4f; background: #fff7f7; }
+
 .ai-test-panel { margin-bottom: 18px; }
 .ai-form { padding: 20px 22px 23px; display: grid; grid-template-columns: minmax(260px, 2fr) 1fr 1fr auto; gap: 14px; align-items: end; }
 .ai-form label { display: grid; gap: 8px; color: #536a86; font-size: 12px; }

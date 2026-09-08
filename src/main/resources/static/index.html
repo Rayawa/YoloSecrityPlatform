@@ -102,7 +102,7 @@
         <section v-show="activePage === 'ai'" class="page">
             <div class="page-heading"><div><h2>AI识别记录</h2><p>YOLO 视觉识别结果及业务告警映射</p></div></div>
             <article class="panel ai-test-panel">
-                <div class="panel-title"><div><h3>发起图片识别</h3><p>需先启动本机 8000 端口的 AI 服务；或将图片放入识别服务目录的 ai-watch 文件夹，将自动识别并推送告警（处理完归档到 processed/）</p></div></div>
+                <div class="panel-title"><div><h3>发起图片识别</h3><p>需先启动本机 8000 端口的 AI 服务；或将图片/视频（mp4/avi/mov）放入识别服务目录的 ai-watch 文件夹，将自动识别并推送告警（处理完归档到 processed/）</p></div></div>
                 <form class="ai-form" @submit.prevent="analyzeImage">
                     <label>图片地址<input v-model.trim="aiForm.imageUrl" type="url" required placeholder="https://example.com/security.jpg"></label>
                     <label>发生区域<input v-model.trim="aiForm.area" type="text" placeholder="例如：A区西门"></label>
@@ -147,36 +147,54 @@
 
         <section v-show="activePage === 'alerts'" class="page">
             <div class="page-heading"><div><h2>实时告警中心</h2><p>待处置和处置中的告警会通过 WebSocket 实时刷新</p></div></div>
-            <article class="panel table-panel"><div class="table-wrap"><table>
-                <thead><tr><th>时间</th><th>类型</th><th>区域</th><th>等级</th><th>来源</th><th>状态</th><th>操作</th></tr></thead>
-                <tbody>
-                <tr v-for="alarm in activeAlarms" :key="alarm.id" :class="{ 'alarm-highlight': alarm.id === highlightAlarmId }">
-                    <td>{{ formatTime(alarm.eventTime) }}</td><td>{{ alarm.type }}</td><td>{{ alarm.area }}</td>
-                    <td><span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span></td><td>{{ alarm.source }}</td>
-                    <td><span class="process-status" :class="{ processing: alarm.status === '处置中' }">{{ alarm.status }}</span></td>
-                    <td class="action-cell">
-                        <button v-if="alarm.status === '待处置'" type="button" @click="updateAlarm(alarm.id, '处置中')">开始处置</button>
-                        <button class="close-button" type="button" @click="updateAlarm(alarm.id, '已关闭')">关闭告警</button>
-                    </td>
-                </tr>
-                <tr v-if="!activeAlarms.length"><td colspan="7" class="empty-state">当前没有未完成告警</td></tr>
-                </tbody>
-            </table></div></article>
+            <div class="alarm-cards">
+                <article v-for="alarm in activeAlarms" :key="alarm.id" class="alarm-card" :class="{ 'alarm-highlight': alarm.id === highlightAlarmId }">
+                    <div class="alarm-card-image">
+                        <img v-if="alarm.imagePath" :src="alarm.imagePath" :alt="alarm.type" loading="lazy">
+                        <div v-else class="alarm-card-placeholder">无现场图片</div>
+                    </div>
+                    <div class="alarm-card-body">
+                        <div class="alarm-card-head">
+                            <strong>{{ alarm.type }}</strong>
+                            <span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span>
+                        </div>
+                        <p class="alarm-card-meta">{{ alarm.area }} · {{ alarm.source }} · {{ formatTime(alarm.eventTime) }}</p>
+                        <p class="alarm-card-detail" :title="alarm.detail">{{ alarm.detail }}</p>
+                        <div class="alarm-card-foot">
+                            <span class="process-status" :class="{ processing: alarm.status === '处置中' }">{{ alarm.status }}</span>
+                            <span class="alarm-card-actions">
+                                <button v-if="alarm.status === '待处置'" type="button" @click="updateAlarm(alarm.id, '处置中')">开始处置</button>
+                                <button class="close-button" type="button" @click="updateAlarm(alarm.id, '已关闭')">关闭告警</button>
+                            </span>
+                        </div>
+                    </div>
+                </article>
+                <p v-if="!activeAlarms.length" class="empty-state alarm-cards-empty">当前没有未完成告警</p>
+            </div>
         </section>
 
         <section v-show="activePage === 'history'" class="page">
             <div class="page-heading"><div><h2>告警处置记录</h2><p>已关闭告警的历史处置结果（共 {{ closedAlarms.length }} 条）</p></div></div>
-            <article class="panel table-panel"><div class="table-wrap"><table>
-                <thead><tr><th>告警时间</th><th>类型</th><th>区域</th><th>等级</th><th>来源</th><th>处置结果</th></tr></thead>
-                <tbody>
-                <tr v-for="alarm in closedAlarms" :key="alarm.id">
-                    <td>{{ formatTime(alarm.eventTime) }}</td><td>{{ alarm.type }}</td><td>{{ alarm.area }}</td>
-                    <td><span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span></td><td>{{ alarm.source }}</td>
-                    <td><span class="closed-status">已关闭</span></td>
-                </tr>
-                <tr v-if="!closedAlarms.length"><td colspan="6" class="empty-state">暂无已关闭告警</td></tr>
-                </tbody>
-            </table></div></article>
+            <div class="alarm-cards">
+                <article v-for="alarm in closedAlarms" :key="alarm.id" class="alarm-card">
+                    <div class="alarm-card-image">
+                        <img v-if="alarm.imagePath" :src="alarm.imagePath" :alt="alarm.type" loading="lazy">
+                        <div v-else class="alarm-card-placeholder">无现场图片</div>
+                    </div>
+                    <div class="alarm-card-body">
+                        <div class="alarm-card-head">
+                            <strong>{{ alarm.type }}</strong>
+                            <span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span>
+                        </div>
+                        <p class="alarm-card-meta">{{ alarm.area }} · {{ alarm.source }} · {{ formatTime(alarm.eventTime) }}</p>
+                        <p class="alarm-card-detail" :title="alarm.detail">{{ alarm.detail }}</p>
+                        <div class="alarm-card-foot">
+                            <span class="closed-status">已关闭</span>
+                        </div>
+                    </div>
+                </article>
+                <p v-if="!closedAlarms.length" class="empty-state alarm-cards-empty">暂无已关闭告警</p>
+            </div>
         </section>
 
         <p v-if="error" class="error-message" role="alert">{{ error }}</p>
