@@ -112,9 +112,6 @@ public class ApiController {
 
     @PostMapping("/ai/event")
     public AiEventResponse receiveAiEvent(@RequestBody AiEventRequest request) {
-        if (request == null) {
-            throw new IllegalArgumentException("请求体不能为空");
-        }
         AlarmRuleMapper.MappingResult result = alarmService.createFromDetections(
                 request.objects(), request.area(), request.deviceCode(), request.image()
         );

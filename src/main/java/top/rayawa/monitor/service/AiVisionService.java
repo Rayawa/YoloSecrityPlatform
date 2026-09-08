@@ -8,6 +8,7 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import top.rayawa.monitor.dto.AiAnalyzeRequest;
 import top.rayawa.monitor.dto.AiAnalyzeResponse;
+import top.rayawa.monitor.dto.AiDetectionObject;
 import top.rayawa.monitor.dto.AiDetectionResponse;
 import top.rayawa.monitor.domain.Alarm;
 
@@ -52,12 +53,10 @@ public class AiVisionService {
             throw new IllegalStateException("AI识别服务不可用，请先启动 ai-service/server.py", e);
         }
 
+        List<AiDetectionObject> objects = detection == null ? List.of() : detection.objects();
         AlarmRuleMapper.MappingResult result = alarmService.createFromDetections(
-                detection == null ? List.of() : detection.objects(),
-                request.area(),
-                request.deviceCode(),
-                request.imageUrl()
+                objects, request.area(), request.deviceCode(), request.imageUrl()
         );
-        return new AiAnalyzeResponse(detection == null ? List.of() : detection.objects(), result.alarms());
+        return new AiAnalyzeResponse(objects, result.alarms());
     }
 }

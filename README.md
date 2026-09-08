@@ -77,8 +77,7 @@
 │   ├── service/                   # 业务层:AlarmService(告警)、AiVisionService(AI 调用)、AlarmRuleMapper(识别结果→告警规则)
 │   ├── service/impl/              # 业务实现(事务 + 提交后 WebSocket 广播)
 │   ├── mapper/                    # MyBatis-Plus Mapper 接口
-│   ├── domain/                    # 实体类(与数据库表一一对应,当前业务实际使用)
-│   ├── model/                     # 同名实体类(历史残留,未被引用,可忽略或删除)
+│   ├── domain/                    # 实体类(与数据库表一一对应)
 │   ├── dto/                       # 接口出入参 record(AI 请求/响应、事件推送响应等)
 │   └── websocket/                 # WebSocket 配置与告警广播处理器
 ├── src/main/resources/
