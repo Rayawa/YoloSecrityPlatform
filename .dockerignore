@@ -1,0 +1,11 @@
+.git
+.idea
+*.iml
+doc
+sql
+ai-service
+src
+config
+.tmp-report
+target/*
+!target/security-monitor-1.0.0.jar

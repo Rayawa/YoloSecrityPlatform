@@ -15,9 +15,22 @@ public interface AlarmService extends IService<Alarm> {
 
     List<Alarm> list(String status, String source);
 
-    Alarm updateStatus(long id, String status);
+    /**
+     * 开始处置：待处置 -> 处置中（讲义接口 POST /api/alarms/{id}/process）。
+     */
+    Alarm process(long id);
 
-    List<Alarm> createFromDetections(
+    /**
+     * 处理完成：待处置/处置中 -> 已关闭（讲义接口 POST /api/alarms/{id}/handle）。
+     */
+    Alarm handle(long id);
+
+    /**
+     * 按告警规则把识别结果映射为告警并入库。
+     *
+     * @return 映射结果（含被跳过的目标识别异常类名）
+     */
+    AlarmRuleMapper.MappingResult createFromDetections(
             List<AiDetectionObject> detections,
             String area,
             String deviceCode,

@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import logging
 import os
+import shutil
+import threading
+import time
 import ipaddress
 import socket
 import sys
 import tempfile
 import zipfile
+from contextlib import asynccontextmanager
 from io import BytesIO
 from pathlib import Path
 from typing import Annotated, Any
@@ -18,7 +23,6 @@ import requests
 import torch
 
 
-ROOT = Path(__file__).resolve().parent.parent
 RUNTIME_ROOT = Path(__file__).resolve().parent / ".runtime"
 ULTRALYTICS_CONFIG = RUNTIME_ROOT / "ultralytics"
 MATPLOTLIB_CONFIG = RUNTIME_ROOT / "matplotlib"
@@ -28,14 +32,45 @@ for runtime_directory in (ULTRALYTICS_CONFIG, MATPLOTLIB_CONFIG, TORCH_CACHE):
 os.environ.setdefault("YOLO_CONFIG_DIR", str(ULTRALYTICS_CONFIG))
 os.environ.setdefault("MPLCONFIGDIR", str(MATPLOTLIB_CONFIG))
 os.environ.setdefault("TORCH_HOME", str(TORCH_CACHE))
-COCO_MODEL_PATH = Path(os.getenv("YOLO_COCO_MODEL", ROOT / "doc" / "yolov5s-coco.pt"))
-FIRE_MODEL_PATH = Path(os.getenv("YOLO_FIRE_MODEL", ROOT / "doc" / "yolov5s-dfire.pt"))
+# 模型与源码包使用 ai-service 目录下的副本（doc/ 仅存放老师下发的原始文件，运行时不得依赖）
+AI_SERVICE_ROOT = Path(__file__).resolve().parent
+COCO_MODEL_PATH = Path(os.getenv("YOLO_COCO_MODEL", AI_SERVICE_ROOT / "models" / "yolov5s-coco.pt"))
+FIRE_MODEL_PATH = Path(os.getenv("YOLO_FIRE_MODEL", AI_SERVICE_ROOT / "models" / "yolov5s-dfire.pt"))
 CONFIDENCE = float(os.getenv("YOLO_CONFIDENCE", "0.45"))
-YOLOV5_ARCHIVE = ROOT / "doc" / "yolov5-master.zip"
+YOLOV5_ARCHIVE = AI_SERVICE_ROOT / "yolov5-master.zip"
 YOLOV5_RUNTIME = RUNTIME_ROOT
 YOLOV5_REPOSITORY = YOLOV5_RUNTIME / "yolov5-master"
 
-app = FastAPI(title="智能安防 AI 视觉分析服务", version="1.0.0")
+# ---- 目录自动识别（模拟摄像头，第八章系统集成）配置 ----
+# 把图片放入 WATCH_DIR（模拟摄像头拍摄画面），后台线程自动识别并推送给平台，
+# 处理完成的图片归档到 processed/ 子目录。
+WATCH_DIR = Path(os.getenv("WATCH_DIR", Path(__file__).resolve().parent / "ai-watch"))
+PROCESSED_DIR = WATCH_DIR / "processed"
+# 平台地址：本地平台默认 423；平台以 Docker 方式部署时改为 http://127.0.0.1:8080
+AI_PLATFORM_URL = os.getenv("AI_PLATFORM_URL", "http://127.0.0.1:423").rstrip("/")
+WATCH_INTERVAL = float(os.getenv("WATCH_INTERVAL", "2"))          # 轮询间隔（秒）
+WATCH_FILE_MIN_AGE = float(os.getenv("WATCH_FILE_MIN_AGE", "1"))  # 文件最短静置时间，防止处理半写入文件
+WATCH_MAX_ATTEMPTS = int(os.getenv("WATCH_MAX_ATTEMPTS", "5"))    # 单张图片失败重试上限
+
+logger = logging.getLogger("ai-watch")
+_stop_event = threading.Event()
+_attempts: dict[str, int] = {}
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    _stop_event.clear()
+    thread = threading.Thread(target=watch_loop, name="ai-watch-scanner", daemon=True)
+    thread.start()
+    print(f"[ai-watch] 监听目录：{WATCH_DIR}（轮询 {WATCH_INTERVAL}s）", flush=True)
+    try:
+        yield
+    finally:
+        _stop_event.set()
+        thread.join(timeout=WATCH_INTERVAL + 2)
+
+
+app = FastAPI(title="智能安防 AI 视觉分析服务", version="1.0.0", lifespan=lifespan)
 _models: list[tuple[str, Any]] | None = None
 
 
@@ -201,6 +236,69 @@ async def detect_upload(
     finally:
         if path is not None:
             path.unlink(missing_ok=True)
+
+
+def scan_watch_directory_once() -> None:
+    """扫描一轮 ai-watch 目录：识别、推送平台、归档（或计入重试）。"""
+    WATCH_DIR.mkdir(parents=True, exist_ok=True)
+    PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
+    names = sorted(
+        name
+        for name in os.listdir(WATCH_DIR)
+        if name.lower().endswith((".jpg", ".jpeg", ".png"))
+        and (WATCH_DIR / name).is_file()      # 只扫顶层文件，天然跳过 processed/ 子目录
+    )
+    for name in names:
+        source = WATCH_DIR / name
+        try:
+            # 拷贝未完成的文件静置不到 WATCH_FILE_MIN_AGE 秒，下轮再试
+            if time.time() - source.stat().st_mtime < WATCH_FILE_MIN_AGE:
+                continue
+            # 本地文件直接推理，不走 /detect 的 URL 下载路径（无 SSRF 面）
+            objects = detect_source(source, CONFIDENCE)["objects"]
+            response = requests.post(
+                f"{AI_PLATFORM_URL}/api/ai/event",
+                json={"image": name, "objects": objects},
+                timeout=(5, 30),
+            )
+            response.raise_for_status()
+            body = response.json()
+            print(
+                f"[ai-watch] {name}：新增 {len(body.get('alarms', []))} 条告警，"
+                f"跳过 {body.get('skipped', [])}",
+                flush=True,
+            )
+            shutil.move(str(source), str(PROCESSED_DIR / name))
+            _attempts.pop(str(source), None)
+        except Exception as exc:
+            # 瞬时故障（平台未启动、网络抖动、文件损坏）重试；
+            # 连续失败达到上限则归档并告警，避免图片堆积和死循环。
+            _attempts[str(source)] = _attempts.get(str(source), 0) + 1
+            if _attempts[str(source)] >= WATCH_MAX_ATTEMPTS:
+                print(
+                    f"[ai-watch] {name} 连续失败 {WATCH_MAX_ATTEMPTS} 次，归档失败图片：{exc}",
+                    flush=True,
+                )
+                try:
+                    shutil.move(str(source), str(PROCESSED_DIR / name))
+                finally:
+                    _attempts.pop(str(source), None)
+            else:
+                print(
+                    f"[ai-watch] {name} 处理失败，将在下轮重试"
+                    f"（{_attempts[str(source)]}/{WATCH_MAX_ATTEMPTS}）：{exc}",
+                    flush=True,
+                )
+
+
+def watch_loop() -> None:
+    """常驻轮询线程：每 WATCH_INTERVAL 秒扫描一轮。"""
+    while not _stop_event.wait(WATCH_INTERVAL):
+        try:
+            scan_watch_directory_once()
+        except Exception as exc:
+            # 顶层兜底：任何异常都不允许扫描线程退出
+            logger.exception("扫描异常：%s", exc)
 
 
 if __name__ == "__main__":

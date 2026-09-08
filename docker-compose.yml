@@ -1,0 +1,56 @@
+# 智能安防管理平台 —— 一键部署（讲义第七章）
+# 用法：
+#   mvn clean package -DskipTests
+#   docker compose up --build -d
+#   浏览器访问 http://localhost:8080
+# 注意：宿主机 3306 已被本机 MySQL 占用时，把下方 "3306:3306" 改为 "3307:3306"
+# 重灌数据（清空数据卷重新初始化）：docker compose down -v
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: security-monitor-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456          # 与讲义一致
+      MYSQL_ROOT_HOST: "%"                     # 允许 app 容器远程 root 连接
+      MYSQL_DATABASE: security_monitor
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+08:00             # 与 JDBC serverTimezone=Asia/Shanghai 一致
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql              # 数据持久化：重启后数据仍在
+      # 首次启动时自动执行建库脚本（脚本本身幂等，可重复执行）
+      - ./sql/mysql8-security-monitor.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-proot123456"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  app:
+    build: .
+    container_name: security-monitor-app
+    environment:
+      SERVER_PORT: "8080"                      # 讲义要求容器内 8080；本地非容器运行仍是 423
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: security_monitor
+      DB_USERNAME: root
+      DB_PASSWORD: root123456
+      # AI 服务跑在宿主机 8000 端口时使用；AI 侧推送平台则用 http://127.0.0.1:8080
+      AI_SERVICE_URL: http://host.docker.internal:8000
+      TZ: Asia/Shanghai
+    ports:
+      - "8080:8080"
+    depends_on:
+      mysql:
+        condition: service_healthy             # 健康检查通过后才启动 app
+    extra_hosts:                               # Linux 需显式映射；macOS/Windows Desktop 亦可
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  mysql-data:

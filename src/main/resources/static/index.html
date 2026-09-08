@@ -102,7 +102,7 @@
         <section v-show="activePage === 'ai'" class="page">
             <div class="page-heading"><div><h2>AI识别记录</h2><p>YOLO 视觉识别结果及业务告警映射</p></div></div>
             <article class="panel ai-test-panel">
-                <div class="panel-title"><div><h3>发起图片识别</h3><p>需先启动本机 8000 端口的 AI 服务</p></div></div>
+                <div class="panel-title"><div><h3>发起图片识别</h3><p>需先启动本机 8000 端口的 AI 服务；或将图片放入识别服务目录的 ai-watch 文件夹，将自动识别并推送告警（处理完归档到 processed/）</p></div></div>
                 <form class="ai-form" @submit.prevent="analyzeImage">
                     <label>图片地址<input v-model.trim="aiForm.imageUrl" type="url" required placeholder="https://example.com/security.jpg"></label>
                     <label>发生区域<input v-model.trim="aiForm.area" type="text" placeholder="例如：A区西门"></label>

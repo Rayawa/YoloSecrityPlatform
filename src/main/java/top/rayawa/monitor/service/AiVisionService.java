@@ -52,12 +52,12 @@ public class AiVisionService {
             throw new IllegalStateException("AI识别服务不可用，请先启动 ai-service/server.py", e);
         }
 
-        List<Alarm> alarms = alarmService.createFromDetections(
+        AlarmRuleMapper.MappingResult result = alarmService.createFromDetections(
                 detection == null ? List.of() : detection.objects(),
                 request.area(),
                 request.deviceCode(),
                 request.imageUrl()
         );
-        return new AiAnalyzeResponse(detection == null ? List.of() : detection.objects(), alarms);
+        return new AiAnalyzeResponse(detection == null ? List.of() : detection.objects(), result.alarms());
     }
 }

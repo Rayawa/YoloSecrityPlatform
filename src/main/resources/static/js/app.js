@@ -68,11 +68,9 @@ createApp({
         }
 
         async function updateAlarm(id, status) {
+            const path = status === '处置中' ? `/api/alarms/${id}/process` : `/api/alarms/${id}/handle`
             try {
-                await request(`/api/alarms/${id}/status`, {
-                    method: 'PATCH',
-                    body: JSON.stringify({ status })
-                })
+                await request(path, { method: 'POST' })
                 showToast(`告警已更新为“${status}”`)
                 await loadAll()
             } catch (exception) {
@@ -144,7 +142,14 @@ createApp({
         }
 
         function formatTime(value) {
-            return value ? value.replace('T', ' ').slice(0, 19) : '—'
+            if (!value) return '—'
+            // eventTime 是带时区的 ISO 字符串(UTC)，sentAt 是无时区的本地时间，
+            // 统一用 Date 解析后按本机时区格式化，避免差 8 小时
+            const date = new Date(value)
+            if (isNaN(date)) return value.replace('T', ' ').slice(0, 19)
+            const pad = n => String(n).padStart(2, '0')
+            return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+                + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
         }
 
         function levelClass(level) {

@@ -6,14 +6,14 @@ import top.rayawa.monitor.mapper.DeviceMapper;
 import top.rayawa.monitor.dto.AiAnalyzeRequest;
 import top.rayawa.monitor.dto.AiAnalyzeResponse;
 import top.rayawa.monitor.dto.AiEventRequest;
-import top.rayawa.monitor.dto.AlarmStatusRequest;
+import top.rayawa.monitor.dto.AiEventResponse;
 import top.rayawa.monitor.domain.Alarm;
 import top.rayawa.monitor.domain.Device;
 import top.rayawa.monitor.service.AiVisionService;
+import top.rayawa.monitor.service.AlarmRuleMapper;
 import top.rayawa.monitor.service.AlarmService;
 import top.rayawa.monitor.websocket.AlertWebSocketHandler;
 import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -95,12 +95,14 @@ public class ApiController {
         return result;
     }
 
-    @PatchMapping("/alarms/{id}/status")
-    public Alarm updateAlarmStatus(@PathVariable long id, @RequestBody AlarmStatusRequest request) {
-        if (request == null || request.status() == null || request.status().isBlank()) {
-            throw new IllegalArgumentException("status 不能为空");
-        }
-        return alarmService.updateStatus(id, request.status().trim());
+    @PostMapping("/alarms/{id}/process")
+    public Alarm processAlarm(@PathVariable long id) {
+        return alarmService.process(id);
+    }
+
+    @PostMapping("/alarms/{id}/handle")
+    public Alarm handleAlarm(@PathVariable long id) {
+        return alarmService.handle(id);
     }
 
     @PostMapping("/ai/analyze")
@@ -108,14 +110,14 @@ public class ApiController {
         return aiVisionService.analyze(request);
     }
 
-    @PostMapping("/ai/events")
-    public AiAnalyzeResponse receiveAiEvent(@RequestBody AiEventRequest request) {
+    @PostMapping("/ai/event")
+    public AiEventResponse receiveAiEvent(@RequestBody AiEventRequest request) {
         if (request == null) {
             throw new IllegalArgumentException("请求体不能为空");
         }
-        List<Alarm> alarms = alarmService.createFromDetections(
-                request.objects(), request.area(), request.deviceCode(), request.imageUrl()
+        AlarmRuleMapper.MappingResult result = alarmService.createFromDetections(
+                request.objects(), request.area(), request.deviceCode(), request.image()
         );
-        return new AiAnalyzeResponse(request.objects(), alarms);
+        return new AiEventResponse(result.alarms(), result.skipped());
     }
 }

@@ -14,7 +14,6 @@ import top.rayawa.monitor.service.AlarmService;
 import top.rayawa.monitor.websocket.AlertWebSocketHandler;
 
 import java.util.List;
-import java.util.Set;
 
 /**
 * @author raychen
@@ -23,8 +22,6 @@ import java.util.Set;
 */
 @Service
 public class AlarmServiceImpl extends ServiceImpl<AlarmMapper, Alarm> implements AlarmService {
-
-    private static final Set<String> ALLOWED_STATUSES = Set.of("待处置", "处置中", "已关闭");
 
     private final AlarmRuleMapper alarmRuleMapper;
     private final AlertWebSocketHandler webSocketHandler;
@@ -51,15 +48,12 @@ public class AlarmServiceImpl extends ServiceImpl<AlarmMapper, Alarm> implements
 
     @Override
     @Transactional
-    public Alarm updateStatus(long id, String status) {
-        if (!ALLOWED_STATUSES.contains(status)) {
-            throw new IllegalArgumentException("状态只能是：待处置、处置中、已关闭");
+    public Alarm process(long id) {
+        Alarm alarm = requireExists(id);
+        if (!"待处置".equals(alarm.getStatus())) {
+            throw new IllegalArgumentException("仅待处置的告警可以开始处置，当前状态：" + alarm.getStatus());
         }
-        Alarm alarm = getById(id);
-        if (alarm == null) {
-            throw new IllegalArgumentException("告警不存在：" + id);
-        }
-        alarm.setStatus(status);
+        alarm.setStatus("处置中");
         baseMapper.updateById(alarm);
         broadcastAfterCommit("alarm-status-changed", alarm);
         return alarm;
@@ -67,18 +61,40 @@ public class AlarmServiceImpl extends ServiceImpl<AlarmMapper, Alarm> implements
 
     @Override
     @Transactional
-    public List<Alarm> createFromDetections(
+    public Alarm handle(long id) {
+        Alarm alarm = requireExists(id);
+        if ("已关闭".equals(alarm.getStatus())) {
+            throw new IllegalArgumentException("该告警已关闭，无需重复处理");
+        }
+        alarm.setStatus("已关闭");
+        baseMapper.updateById(alarm);
+        broadcastAfterCommit("alarm-status-changed", alarm);
+        return alarm;
+    }
+
+    @Override
+    @Transactional
+    public AlarmRuleMapper.MappingResult createFromDetections(
             List<AiDetectionObject> detections,
             String area,
             String deviceCode,
             String imageUrl
     ) {
-        List<Alarm> alarms = alarmRuleMapper.map(detections, area, deviceCode, imageUrl);
-        alarms.forEach(alarm -> {
+        AlarmRuleMapper.MappingResult result = alarmRuleMapper.map(detections, area, deviceCode, imageUrl);
+        // 被跳过的目标识别异常对象不入库、不推送，天然满足"不入库不推送"
+        result.alarms().forEach(alarm -> {
             baseMapper.insert(alarm);
             broadcastAfterCommit("new-alarm", alarm);
         });
-        return alarms;
+        return result;
+    }
+
+    private Alarm requireExists(long id) {
+        Alarm alarm = getById(id);
+        if (alarm == null) {
+            throw new IllegalArgumentException("告警不存在：" + id);
+        }
+        return alarm;
     }
 
     private void broadcastAfterCommit(String event, Alarm alarm) {
@@ -95,7 +111,3 @@ public class AlarmServiceImpl extends ServiceImpl<AlarmMapper, Alarm> implements
     }
 
 }
-
-
-
-
