@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import logging
 import os
 import shutil
@@ -16,8 +17,9 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urljoin, urlparse
 
+import cv2
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
-from PIL import Image
+from PIL import Image, ImageDraw
 from pydantic import BaseModel, HttpUrl
 import requests
 import torch
@@ -186,6 +188,28 @@ def detect_source(source: str | Path | Image.Image, confidence: float) -> dict:
     return {"objects": objects}
 
 
+def draw_boxes(image: Image.Image, objects: list[dict]) -> Image.Image:
+    """在原图上绘制检测框与标签，返回新图（不修改入参）。"""
+    annotated = image.copy()
+    draw = ImageDraw.Draw(annotated)
+    for obj in objects:
+        x1, y1, x2, y2 = obj["bbox"]
+        label = f"{obj['class']} {obj['conf']:.2f}"
+        draw.rectangle([x1, y1, x2, y2], outline="#FF3B30", width=3)
+        draw.text((x1, max(0, y1 - 14)), label, fill="#FF3B30")
+    return annotated
+
+
+def to_base64_jpeg(image: Image.Image, max_width: int = 640) -> str:
+    """等比缩到 max_width 宽以内后转 JPEG base64（用于接口返回前端展示）。"""
+    if image.width > max_width:
+        ratio = max_width / image.width
+        image = image.resize((max_width, int(image.height * ratio)))
+    buffer = BytesIO()
+    image.save(buffer, format="JPEG", quality=80)
+    return base64.b64encode(buffer.getvalue()).decode()
+
+
 @app.get("/health")
 def health() -> dict:
     return {
@@ -203,7 +227,10 @@ def detect_get(
     confidence: Annotated[float, Query(ge=0.01, le=1.0)] = CONFIDENCE,
 ) -> dict:
     try:
-        return detect_source(download_image(str(url)), confidence)
+        image = download_image(str(url))
+        result = detect_source(image, confidence)
+        result["annotated"] = to_base64_jpeg(draw_boxes(image, result["objects"]))
+        return result
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"识别失败：{exc}") from exc
 
@@ -214,7 +241,10 @@ def detect_post(request: DetectRequest) -> dict:
     if not 0.01 <= confidence <= 1.0:
         raise HTTPException(status_code=400, detail="confidence 必须在 0.01 到 1.0 之间")
     try:
-        return detect_source(download_image(str(request.url)), confidence)
+        image = download_image(str(request.url))
+        result = detect_source(image, confidence)
+        result["annotated"] = to_base64_jpeg(draw_boxes(image, result["objects"]))
+        return result
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"识别失败：{exc}") from exc
 
@@ -230,10 +260,60 @@ async def detect_upload(
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temporary:
             temporary.write(await file.read())
             path = Path(temporary.name)
-        return detect_source(path, confidence)
+        image = Image.open(path).convert("RGB")
+        result = detect_source(image, confidence)
+        result["annotated"] = to_base64_jpeg(draw_boxes(image, result["objects"]))
+        return result
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"识别失败：{exc}") from exc
     finally:
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+
+@app.post("/detect/video")
+async def detect_video(
+    file: Annotated[UploadFile, File()],
+    max_frames: Annotated[int, Query(ge=1, le=10)] = 5,
+    confidence: Annotated[float, Query(ge=0.01, le=1.0)] = CONFIDENCE,
+) -> dict:
+    """上传视频：均匀抽取最多 max_frames 帧逐帧推理，返回带框图的帧列表。"""
+    suffix = Path(file.filename or "upload.mp4").suffix or ".mp4"
+    path: Path | None = None
+    capture = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temporary:
+            temporary.write(await file.read())
+            path = Path(temporary.name)
+        capture = cv2.VideoCapture(str(path))
+        if not capture.isOpened():
+            raise HTTPException(status_code=422, detail="无法解码视频文件（支持的格式：mp4/avi/mov 等）")
+        total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        count = min(max_frames, total) if total > 0 else max_frames
+        # 均匀抽帧：总帧数已知时按比例分布；未知时从头读 count 帧
+        frame_indices = [round(total * i / count) for i in range(count)] if total > 0 else list(range(count))
+        frames: list[dict] = []
+        for index in frame_indices:
+            if total > 0:
+                capture.set(cv2.CAP_PROP_POS_FRAMES, index)
+            ok, frame = capture.read()
+            if not ok:
+                continue
+            image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            result = detect_source(image, confidence)
+            frames.append({
+                "frame": index,
+                "objects": result["objects"],
+                "annotated": to_base64_jpeg(draw_boxes(image, result["objects"])),
+            })
+        return {"totalFrames": total, "frames": frames}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"视频识别失败：{exc}") from exc
+    finally:
+        if capture is not None:
+            capture.release()
         if path is not None:
             path.unlink(missing_ok=True)
 
@@ -255,7 +335,8 @@ def scan_watch_directory_once() -> None:
             if time.time() - source.stat().st_mtime < WATCH_FILE_MIN_AGE:
                 continue
             # 本地文件直接推理，不走 /detect 的 URL 下载路径（无 SSRF 面）
-            objects = detect_source(source, CONFIDENCE)["objects"]
+            image = Image.open(source).convert("RGB")
+            objects = detect_source(image, CONFIDENCE)["objects"]
             response = requests.post(
                 f"{AI_PLATFORM_URL}/api/ai/event",
                 json={"image": name, "objects": objects},
@@ -269,6 +350,8 @@ def scan_watch_directory_once() -> None:
                 flush=True,
             )
             shutil.move(str(source), str(PROCESSED_DIR / name))
+            # 顺带保存带检测框的标注图，便于回看"模型看到了什么"
+            draw_boxes(image, objects).save(PROCESSED_DIR / f"annotated_{name}")
             _attempts.pop(str(source), None)
         except Exception as exc:
             # 瞬时故障（平台未启动、网络抖动、文件损坏）重试；

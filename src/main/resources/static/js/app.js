@@ -20,12 +20,19 @@ createApp({
         const socketConnected = ref(false)
         const error = ref('')
         const toast = ref('')
+        const toastAlarmId = ref(null)
+        const highlightAlarmId = ref(null)
         const lastAiResult = ref('')
+        const aiAnnotated = ref('')
+        const videoFile = ref(null)
+        const analyzingVideo = ref(false)
+        const videoResult = ref(null)
         const aiForm = ref({ imageUrl: '', area: 'A区西门', deviceCode: 'CAM-001' })
         let clockTimer = null
         let socket = null
         let reconnectTimer = null
         let toastTimer = null
+        let highlightTimer = null
 
         const latestAlarms = computed(() => alarms.value.slice(0, 6))
         const aiAlarms = computed(() => alarms.value.filter(item => item.source === 'AI视觉分析'))
@@ -82,6 +89,7 @@ createApp({
             analyzing.value = true
             error.value = ''
             lastAiResult.value = ''
+            aiAnnotated.value = ''
             try {
                 const result = await request('/api/ai/analyze', {
                     method: 'POST',
@@ -91,12 +99,47 @@ createApp({
                     ? result.objects.map(item => `${item.class} ${(item.conf * 100).toFixed(1)}%`).join('、')
                     : '未识别到目标'
                 lastAiResult.value = `识别结果：${objectText}；生成 ${result.alarms.length} 条业务告警。`
+                aiAnnotated.value = result.annotated || ''
                 showToast('AI 识别已完成')
                 await loadAll()
             } catch (exception) {
                 error.value = `AI识别失败：${exception.message}`
             } finally {
                 analyzing.value = false
+            }
+        }
+
+        async function analyzeVideo() {
+            if (!videoFile.value) {
+                error.value = '请先选择视频文件'
+                return
+            }
+            analyzingVideo.value = true
+            error.value = ''
+            videoResult.value = null
+            try {
+                const formData = new FormData()
+                formData.append('file', videoFile.value)
+                formData.append('area', aiForm.value.area || '')
+                formData.append('deviceCode', aiForm.value.deviceCode || '')
+                const response = await fetch('/api/ai/analyze-video', { method: 'POST', body: formData })
+                if (!response.ok) {
+                    let message = `视频识别失败：HTTP ${response.status}`
+                    try {
+                        const body = await response.json()
+                        if (body.message) message = body.message
+                    } catch (_) {
+                        // 使用默认错误信息。
+                    }
+                    throw new Error(message)
+                }
+                videoResult.value = await response.json()
+                showToast('视频识别已完成')
+                await loadAll()
+            } catch (exception) {
+                error.value = exception.message
+            } finally {
+                analyzingVideo.value = false
             }
         }
 
@@ -109,7 +152,11 @@ createApp({
                 try {
                     const message = JSON.parse(event.data)
                     const alarm = message.alarm || {}
-                    showToast(message.event === 'new-alarm' ? `收到新告警：${alarm.type || '未知类型'}` : `告警状态已更新：${alarm.status || ''}`)
+                    if (message.event === 'new-alarm') {
+                        showToast(`收到新告警：${alarm.type || '未知类型'}（${alarm.area || '未知区域'}）`, alarm.id)
+                    } else {
+                        showToast(`告警状态已更新：${alarm.status || ''}`)
+                    }
                     await loadAll()
                 } catch (_) {
                     await loadAll()
@@ -128,10 +175,22 @@ createApp({
             error.value = ''
         }
 
-        function showToast(message) {
+        function showToast(message, alarmId = null) {
             toast.value = message
+            toastAlarmId.value = alarmId
             clearTimeout(toastTimer)
-            toastTimer = setTimeout(() => { toast.value = '' }, 3200)
+            toastTimer = setTimeout(() => { toast.value = ''; toastAlarmId.value = null }, 4000)
+        }
+
+        function goToAlarm() {
+            if (!toastAlarmId.value) return
+            // 跳转到实时告警中心并高亮对应告警行 4 秒
+            highlightAlarmId.value = toastAlarmId.value
+            selectPage('alerts')
+            toast.value = ''
+            toastAlarmId.value = null
+            clearTimeout(highlightTimer)
+            highlightTimer = setTimeout(() => { highlightAlarmId.value = null }, 4000)
         }
 
         function updateClock() {
@@ -171,13 +230,16 @@ createApp({
             clearInterval(clockTimer)
             clearTimeout(reconnectTimer)
             clearTimeout(toastTimer)
+            clearTimeout(highlightTimer)
             if (socket) socket.close()
         })
 
         return {
             navItems, activePage, sidebarOpen, nowText, dashboard, alarms, devices, loading, analyzing,
-            socketConnected, error, toast, lastAiResult, aiForm, latestAlarms, aiAlarms, activeAlarms,
-            closedAlarms, loadAll, updateAlarm, analyzeImage, selectPage, formatTime, levelClass, deviceAbbr
+            socketConnected, error, toast, toastAlarmId, highlightAlarmId, lastAiResult, aiAnnotated,
+            videoFile, analyzingVideo, videoResult, aiForm, latestAlarms, aiAlarms, activeAlarms,
+            closedAlarms, loadAll, updateAlarm, analyzeImage, analyzeVideo, selectPage, goToAlarm,
+            formatTime, levelClass, deviceAbbr
         }
     }
 }).mount('#app')

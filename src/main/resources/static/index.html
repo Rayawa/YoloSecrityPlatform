@@ -110,6 +110,27 @@
                     <button class="primary-button" type="submit" :disabled="analyzing">{{ analyzing ? '识别中...' : '开始识别' }}</button>
                 </form>
                 <p v-if="lastAiResult" class="ai-result">{{ lastAiResult }}</p>
+                <div v-if="aiAnnotated" class="ai-annotated">
+                    <img :src="'data:image/jpeg;base64,' + aiAnnotated" alt="识别标注图">
+                </div>
+            </article>
+            <article class="panel ai-test-panel">
+                <div class="panel-title"><div><h3>视频识别（抽帧 + 框图）</h3><p>上传 MP4/AVI/MOV 视频，均匀抽取最多 5 帧逐帧识别并绘制检测框</p></div></div>
+                <form class="ai-form" @submit.prevent="analyzeVideo">
+                    <label>视频文件<input type="file" accept="video/*" required @change="event => videoFile = event.target.files[0]"></label>
+                    <label>发生区域<input v-model.trim="aiForm.area" type="text" placeholder="例如：A区西门"></label>
+                    <label>设备编码<input v-model.trim="aiForm.deviceCode" type="text" placeholder="例如：CAM-001"></label>
+                    <button class="primary-button" type="submit" :disabled="analyzingVideo">{{ analyzingVideo ? '识别中...' : '开始识别' }}</button>
+                </form>
+                <div v-if="videoResult" class="video-result">
+                    <p class="ai-result">抽帧识别完成：生成 {{ videoResult.alarms.length }} 条业务告警<template v-if="videoResult.skipped.length">，跳过 {{ videoResult.skipped.join('、') }}</template>。</p>
+                    <div class="video-frames">
+                        <figure v-for="frame in videoResult.frames" :key="frame.frame" class="video-frame">
+                            <img :src="'data:image/jpeg;base64,' + frame.annotated" :alt="'第 ' + frame.frame + ' 帧'">
+                            <figcaption>第 {{ frame.frame }} 帧<template v-if="frame.objects.length">：{{ frame.objects.map(obj => obj.class + ' ' + (obj.conf * 100).toFixed(1) + '%').join('、') }}</template><template v-else>：未识别到目标</template></figcaption>
+                        </figure>
+                    </div>
+                </div>
             </article>
             <article class="panel table-panel"><div class="table-wrap"><table>
                 <thead><tr><th>识别时间</th><th>告警类型</th><th>区域</th><th>置信结果</th><th>等级</th><th>状态</th></tr></thead>
@@ -129,7 +150,7 @@
             <article class="panel table-panel"><div class="table-wrap"><table>
                 <thead><tr><th>时间</th><th>类型</th><th>区域</th><th>等级</th><th>来源</th><th>状态</th><th>操作</th></tr></thead>
                 <tbody>
-                <tr v-for="alarm in activeAlarms" :key="alarm.id">
+                <tr v-for="alarm in activeAlarms" :key="alarm.id" :class="{ 'alarm-highlight': alarm.id === highlightAlarmId }">
                     <td>{{ formatTime(alarm.eventTime) }}</td><td>{{ alarm.type }}</td><td>{{ alarm.area }}</td>
                     <td><span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span></td><td>{{ alarm.source }}</td>
                     <td><span class="process-status" :class="{ processing: alarm.status === '处置中' }">{{ alarm.status }}</span></td>
@@ -160,7 +181,10 @@
 
         <p v-if="error" class="error-message" role="alert">{{ error }}</p>
     </main>
-    <div v-if="toast" class="toast" role="status">{{ toast }}</div>
+    <div v-if="toast" class="toast" role="status">
+        <span>{{ toast }}</span>
+        <button v-if="toastAlarmId" class="toast-link" type="button" @click="goToAlarm">立即处置 →</button>
+    </div>
 </div>
 <script src="js/app.js"></script>
 </body>
