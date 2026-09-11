@@ -18,6 +18,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
 
 /**
 * @author raychen
@@ -113,7 +114,7 @@ public class AlarmServiceImpl extends ServiceImpl<AlarmMapper, Alarm> implements
         }
         try {
             byte[] bytes = Base64.getDecoder().decode(imageData);
-            String filename = "alarm_" + System.currentTimeMillis() + ".jpg";
+            String filename = "alarm_" + UUID.randomUUID() + ".jpg";
             Files.write(imageDir.resolve(filename), bytes);
             return "/uploads/" + filename;
         } catch (Exception ignored) {

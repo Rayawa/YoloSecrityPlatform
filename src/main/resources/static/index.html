@@ -9,200 +9,162 @@
 </head>
 <body>
 <div id="app" v-cloak>
-    <header class="topbar">
-        <button class="mobile-menu" type="button" aria-label="展开导航" @click="sidebarOpen = !sidebarOpen">☰</button>
-        <h1>智能安防远程监控平台</h1>
-        <div class="topbar-right">
-            <span class="socket-state" :class="{ online: socketConnected }">
-                {{ socketConnected ? '实时通道已连接' : '实时通道重连中' }}
-            </span>
-            <time>{{ nowText }}</time>
-        </div>
-    </header>
+    <div v-if="!authReady" class="login-shell"><div class="login-loading">正在检查登录状态…</div></div>
 
-    <aside class="sidebar" :class="{ open: sidebarOpen }">
-        <nav aria-label="平台功能导航">
-            <button
-                v-for="item in navItems"
-                :key="item.id"
-                type="button"
-                :class="{ active: activePage === item.id }"
-                @click="selectPage(item.id)"
-            >
-                <span class="nav-icon">{{ item.icon }}</span>
-                {{ item.label }}
-                <span v-if="item.id === 'alerts' && dashboard.pendingAlarms" class="nav-badge">
-                    {{ dashboard.pendingAlarms }}
-                </span>
-            </button>
-        </nav>
-        <div class="sidebar-footer"><span></span>私有数据库已连接</div>
-    </aside>
-    <div v-if="sidebarOpen" class="sidebar-mask" @click="sidebarOpen = false"></div>
-
-    <main class="content">
-        <section v-show="activePage === 'dashboard'" class="page">
-            <div class="page-heading">
-                <div><h2>监控大屏</h2><p>园区安防运行状态与实时告警概览</p></div>
-                <button class="secondary-button" type="button" @click="loadAll" :disabled="loading">
-                    {{ loading ? '刷新中...' : '刷新数据' }}
-                </button>
-            </div>
-            <div class="metric-grid">
-                <article class="metric-card blue"><span>在线设备</span><strong>{{ dashboard.onlineDevices }}</strong><small>设备总数 {{ dashboard.deviceCount }}</small></article>
-                <article class="metric-card red"><span>待处置告警</span><strong>{{ dashboard.pendingAlarms }}</strong><small>需要安保人员确认</small></article>
-                <article class="metric-card orange"><span>告警总数</span><strong>{{ dashboard.alarmCount }}</strong><small>数据库累计记录</small></article>
-                <article class="metric-card green"><span>AI 识别事件</span><strong>{{ dashboard.aiEvents }}</strong><small>视觉模型分析结果</small></article>
-            </div>
-            <div class="dashboard-grid">
-                <article class="panel">
-                    <div class="panel-title">
-                        <div><h3>最新实时告警</h3><p>WebSocket 自动更新</p></div>
-                        <button class="text-button" type="button" @click="selectPage('alerts')">查看全部</button>
-                    </div>
-                    <div v-if="latestAlarms.length" class="alarm-stream">
-                        <div v-for="alarm in latestAlarms" :key="alarm.id" class="stream-item">
-                            <span class="level-dot" :class="levelClass(alarm.level)"></span>
-                            <div><strong>{{ alarm.type }}</strong><p>{{ alarm.area }} · {{ alarm.detail }}</p></div>
-                            <time>{{ formatTime(alarm.eventTime) }}</time>
-                        </div>
-                    </div>
-                    <p v-else class="empty-state">暂无告警数据</p>
-                </article>
-                <article class="panel">
-                    <div class="panel-title">
-                        <div><h3>设备在线状态</h3><p>按园区设备实时汇总</p></div>
-                        <button class="text-button" type="button" @click="selectPage('devices')">设备详情</button>
-                    </div>
-                    <div class="device-summary">
-                        <div v-for="device in devices.slice(0, 6)" :key="device.id">
-                            <span class="device-mark">{{ deviceAbbr(device.type) }}</span>
-                            <p><strong>{{ device.name }}</strong><small>{{ device.area }}</small></p>
-                            <span class="status-text" :class="{ offline: device.status !== '在线' }">{{ device.status }}</span>
-                        </div>
-                    </div>
-                </article>
-            </div>
+    <main v-else-if="!authenticated" class="login-shell">
+        <section class="login-card" aria-labelledby="login-title">
+            <div class="login-brand"><span>YS</span></div>
+            <h1 id="login-title">智能安防监控平台</h1>
+            <p>请输入平台账号，登录后查看园区实时安防数据</p>
+            <form class="login-form" @submit.prevent="login">
+                <label>用户名<input v-model.trim="loginForm.username" name="username" autocomplete="username" required autofocus placeholder="请输入用户名"></label>
+                <label>密码<input v-model="loginForm.password" name="password" type="password" autocomplete="current-password" required placeholder="请输入密码"></label>
+                <button class="primary-button login-button" type="submit" :disabled="loggingIn">{{ loggingIn ? '登录中…' : '登录平台' }}</button>
+            </form>
+            <p v-if="loginError" class="login-error" role="alert">{{ loginError }}</p>
         </section>
-
-        <section v-show="activePage === 'devices'" class="page">
-            <div class="page-heading"><div><h2>设备信息</h2><p>园区设备与在线状态（共 {{ devices.length }} 台）</p></div></div>
-            <article class="panel table-panel"><div class="table-wrap"><table>
-                <thead><tr><th>设备编码</th><th>名称</th><th>类型</th><th>区域</th><th>状态</th></tr></thead>
-                <tbody>
-                <tr v-for="device in devices" :key="device.id">
-                    <td class="code-cell">{{ device.code }}</td><td>{{ device.name }}</td><td>{{ device.type }}</td><td>{{ device.area }}</td>
-                    <td><span class="status-text" :class="{ offline: device.status !== '在线' }">{{ device.status }}</span></td>
-                </tr>
-                <tr v-if="!devices.length"><td colspan="5" class="empty-state">暂无设备数据</td></tr>
-                </tbody>
-            </table></div></article>
-        </section>
-
-        <section v-show="activePage === 'ai'" class="page">
-            <div class="page-heading"><div><h2>AI识别记录</h2><p>YOLO 视觉识别结果及业务告警映射</p></div></div>
-            <article class="panel ai-test-panel">
-                <div class="panel-title"><div><h3>发起图片识别</h3><p>需先启动本机 8000 端口的 AI 服务；或将图片/视频（mp4/avi/mov）放入识别服务目录的 ai-watch 文件夹，将自动识别并推送告警（处理完归档到 processed/）</p></div></div>
-                <form class="ai-form" @submit.prevent="analyzeImage">
-                    <label>图片地址<input v-model.trim="aiForm.imageUrl" type="url" required placeholder="https://example.com/security.jpg"></label>
-                    <label>发生区域<input v-model.trim="aiForm.area" type="text" placeholder="例如：A区西门"></label>
-                    <label>设备编码<input v-model.trim="aiForm.deviceCode" type="text" placeholder="例如：CAM-001"></label>
-                    <button class="primary-button" type="submit" :disabled="analyzing">{{ analyzing ? '识别中...' : '开始识别' }}</button>
-                </form>
-                <p v-if="lastAiResult" class="ai-result">{{ lastAiResult }}</p>
-                <div v-if="aiAnnotated" class="ai-annotated">
-                    <img :src="'data:image/jpeg;base64,' + aiAnnotated" alt="识别标注图">
-                </div>
-            </article>
-            <article class="panel ai-test-panel">
-                <div class="panel-title"><div><h3>视频识别（抽帧 + 框图）</h3><p>上传 MP4/AVI/MOV 视频，均匀抽取最多 5 帧逐帧识别并绘制检测框</p></div></div>
-                <form class="ai-form" @submit.prevent="analyzeVideo">
-                    <label>视频文件<input type="file" accept="video/*" required @change="event => videoFile = event.target.files[0]"></label>
-                    <label>发生区域<input v-model.trim="aiForm.area" type="text" placeholder="例如：A区西门"></label>
-                    <label>设备编码<input v-model.trim="aiForm.deviceCode" type="text" placeholder="例如：CAM-001"></label>
-                    <button class="primary-button" type="submit" :disabled="analyzingVideo">{{ analyzingVideo ? '识别中...' : '开始识别' }}</button>
-                </form>
-                <div v-if="videoResult" class="video-result">
-                    <p class="ai-result">抽帧识别完成：生成 {{ videoResult.alarms.length }} 条业务告警<template v-if="videoResult.skipped.length">，跳过 {{ videoResult.skipped.join('、') }}</template>。</p>
-                    <div class="video-frames">
-                        <figure v-for="frame in videoResult.frames" :key="frame.frame" class="video-frame">
-                            <img :src="'data:image/jpeg;base64,' + frame.annotated" :alt="'第 ' + frame.frame + ' 帧'">
-                            <figcaption>第 {{ frame.frame }} 帧<template v-if="frame.objects.length">：{{ frame.objects.map(obj => obj.class + ' ' + (obj.conf * 100).toFixed(1) + '%').join('、') }}</template><template v-else>：未识别到目标</template></figcaption>
-                        </figure>
-                    </div>
-                </div>
-            </article>
-            <article class="panel table-panel"><div class="table-wrap"><table>
-                <thead><tr><th>识别时间</th><th>告警类型</th><th>区域</th><th>置信结果</th><th>等级</th><th>状态</th></tr></thead>
-                <tbody>
-                <tr v-for="alarm in aiAlarms" :key="alarm.id">
-                    <td>{{ formatTime(alarm.eventTime) }}</td><td>{{ alarm.type }}</td><td>{{ alarm.area }}</td>
-                    <td class="detail-cell" :title="alarm.detail">{{ alarm.detail }}</td>
-                    <td><span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span></td><td>{{ alarm.status }}</td>
-                </tr>
-                <tr v-if="!aiAlarms.length"><td colspan="6" class="empty-state">暂无 AI 识别记录</td></tr>
-                </tbody>
-            </table></div></article>
-        </section>
-
-        <section v-show="activePage === 'alerts'" class="page">
-            <div class="page-heading"><div><h2>实时告警中心</h2><p>待处置和处置中的告警会通过 WebSocket 实时刷新</p></div></div>
-            <div class="alarm-cards">
-                <article v-for="alarm in activeAlarms" :key="alarm.id" class="alarm-card" :class="{ 'alarm-highlight': alarm.id === highlightAlarmId }">
-                    <div class="alarm-card-image">
-                        <img v-if="alarm.imagePath" :src="alarm.imagePath" :alt="alarm.type" loading="lazy">
-                        <div v-else class="alarm-card-placeholder">无现场图片</div>
-                    </div>
-                    <div class="alarm-card-body">
-                        <div class="alarm-card-head">
-                            <strong>{{ alarm.type }}</strong>
-                            <span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span>
-                        </div>
-                        <p class="alarm-card-meta">{{ alarm.area }} · {{ alarm.source }} · {{ formatTime(alarm.eventTime) }}</p>
-                        <p class="alarm-card-detail" :title="alarm.detail">{{ alarm.detail }}</p>
-                        <div class="alarm-card-foot">
-                            <span class="process-status" :class="{ processing: alarm.status === '处置中' }">{{ alarm.status }}</span>
-                            <span class="alarm-card-actions">
-                                <button v-if="alarm.status === '待处置'" type="button" @click="updateAlarm(alarm.id, '处置中')">开始处置</button>
-                                <button class="close-button" type="button" @click="updateAlarm(alarm.id, '已关闭')">关闭告警</button>
-                            </span>
-                        </div>
-                    </div>
-                </article>
-                <p v-if="!activeAlarms.length" class="empty-state alarm-cards-empty">当前没有未完成告警</p>
-            </div>
-        </section>
-
-        <section v-show="activePage === 'history'" class="page">
-            <div class="page-heading"><div><h2>告警处置记录</h2><p>已关闭告警的历史处置结果（共 {{ closedAlarms.length }} 条）</p></div></div>
-            <div class="alarm-cards">
-                <article v-for="alarm in closedAlarms" :key="alarm.id" class="alarm-card">
-                    <div class="alarm-card-image">
-                        <img v-if="alarm.imagePath" :src="alarm.imagePath" :alt="alarm.type" loading="lazy">
-                        <div v-else class="alarm-card-placeholder">无现场图片</div>
-                    </div>
-                    <div class="alarm-card-body">
-                        <div class="alarm-card-head">
-                            <strong>{{ alarm.type }}</strong>
-                            <span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span>
-                        </div>
-                        <p class="alarm-card-meta">{{ alarm.area }} · {{ alarm.source }} · {{ formatTime(alarm.eventTime) }}</p>
-                        <p class="alarm-card-detail" :title="alarm.detail">{{ alarm.detail }}</p>
-                        <div class="alarm-card-foot">
-                            <span class="closed-status">已关闭</span>
-                        </div>
-                    </div>
-                </article>
-                <p v-if="!closedAlarms.length" class="empty-state alarm-cards-empty">暂无已关闭告警</p>
-            </div>
-        </section>
-
-        <p v-if="error" class="error-message" role="alert">{{ error }}</p>
     </main>
-    <div v-if="toast" class="toast" role="status">
-        <span>{{ toast }}</span>
-        <button v-if="toastAlarmId" class="toast-link" type="button" @click="goToAlarm">立即处置 →</button>
-    </div>
+
+    <template v-else>
+        <header class="topbar">
+            <button class="mobile-menu" type="button" aria-label="展开导航" @click="sidebarOpen = !sidebarOpen">☰</button>
+            <h1>智能安防远程监控平台</h1>
+            <div class="topbar-right">
+                <span class="socket-state" :class="{ online: socketConnected }">{{ socketConnected ? '实时通道已连接' : '实时通道重连中' }}</span>
+                <time>{{ nowText }}</time><span class="current-user">{{ currentUser }}</span>
+                <button class="logout-button" type="button" @click="logout">退出</button>
+            </div>
+        </header>
+
+        <aside class="sidebar" :class="{ open: sidebarOpen }">
+            <nav aria-label="平台功能导航">
+                <button v-for="item in navItems" :key="item.id" type="button" :class="{ active: activePage === item.id }" @click="selectPage(item.id)">
+                    <span class="nav-icon">{{ item.icon }}</span>{{ item.label }}
+                    <span v-if="item.id === 'alerts' && dashboard.pendingAlarms" class="nav-badge">{{ dashboard.pendingAlarms }}</span>
+                </button>
+            </nav>
+            <div class="sidebar-footer"><span></span>私有数据库已连接</div>
+        </aside>
+        <div v-if="sidebarOpen" class="sidebar-mask" @click="sidebarOpen = false"></div>
+
+        <main class="content">
+            <section v-show="activePage === 'dashboard'" class="page">
+                <div class="page-heading">
+                    <div><h2>监控大屏</h2><p>园区安防运行状态与实时告警概览</p></div>
+                    <button class="secondary-button" type="button" @click="loadAll" :disabled="loading">{{ loading ? '刷新中…' : '刷新数据' }}</button>
+                </div>
+                <div class="metric-grid">
+                    <article class="metric-card blue"><span>在线设备</span><strong>{{ dashboard.onlineDevices }}</strong><small>设备总数 {{ dashboard.deviceCount }}</small></article>
+                    <article class="metric-card red"><span>待处置告警</span><strong>{{ dashboard.pendingAlarms }}</strong><small>需要安保人员确认</small></article>
+                    <article class="metric-card orange"><span>告警总数</span><strong>{{ dashboard.alarmCount }}</strong><small>数据库累计记录</small></article>
+                    <article class="metric-card green"><span>AI 识别事件</span><strong>{{ dashboard.aiEvents }}</strong><small>视觉模型分析结果</small></article>
+                </div>
+                <div class="dashboard-grid">
+                    <article class="panel">
+                        <div class="panel-title"><div><h3>最新实时告警</h3><p>WebSocket 自动更新</p></div><button class="text-button" type="button" @click="selectPage('alerts')">查看全部</button></div>
+                        <div v-if="latestAlarms.length" class="alarm-stream">
+                            <div v-for="alarm in latestAlarms" :key="alarm.id" class="stream-item"><span class="level-dot" :class="levelClass(alarm.level)"></span><div><strong>{{ alarm.type }}</strong><p>{{ alarm.area }} · {{ alarm.detail }}</p></div><time>{{ formatTime(alarm.eventTime) }}</time></div>
+                        </div>
+                        <p v-else class="empty-state">暂无告警数据</p>
+                    </article>
+                    <article class="panel">
+                        <div class="panel-title"><div><h3>设备在线状态</h3><p>按园区设备实时汇总</p></div><button class="text-button" type="button" @click="selectPage('devices')">设备详情</button></div>
+                        <div class="device-summary">
+                            <div v-for="device in devices.slice(0, 6)" :key="device.id"><span class="device-mark">{{ deviceAbbr(device.type) }}</span><p><strong>{{ device.name }}</strong><small>{{ device.area }}</small></p><span class="status-text" :class="{ offline: device.status !== '在线' }">{{ device.status }}</span></div>
+                        </div>
+                    </article>
+                </div>
+            </section>
+
+            <section v-show="activePage === 'devices'" class="page">
+                <div class="page-heading"><div><h2>设备信息</h2><p>园区设备与在线状态（共 {{ devices.length }} 台）</p></div></div>
+                <article class="panel table-panel"><div class="table-wrap"><table>
+                    <thead><tr><th>设备编码</th><th>名称</th><th>类型</th><th>区域</th><th>状态</th></tr></thead>
+                    <tbody><tr v-for="device in devices" :key="device.id"><td class="code-cell">{{ device.code }}</td><td>{{ device.name }}</td><td>{{ device.type }}</td><td>{{ device.area }}</td><td><span class="status-text" :class="{ offline: device.status !== '在线' }">{{ device.status }}</span></td></tr><tr v-if="!devices.length"><td colspan="5" class="empty-state">暂无设备数据</td></tr></tbody>
+                </table></div></article>
+            </section>
+
+            <section v-show="activePage === 'ai'" class="page">
+                <div class="page-heading"><div><h2>AI识别记录</h2><p>上传图片或视频，查看 YOLO 识别及业务告警映射</p></div></div>
+                <article class="panel ai-test-panel">
+                    <div class="panel-title"><div><h3>上传文件识别</h3><p>统一支持 JPG、PNG 图片和 MP4、AVI、MOV 视频；视频最多均匀抽取 5 帧</p></div></div>
+                    <form class="ai-form" @submit.prevent="analyzeFile">
+                        <label>图片或视频文件<input type="file" accept=".jpg,.jpeg,.png,.mp4,.avi,.mov,image/jpeg,image/png,video/mp4,video/quicktime,video/x-msvideo" required @change="selectAiFile"></label>
+                        <label>发生区域<input v-model.trim="aiForm.area" type="text" placeholder="例如：A区西门"></label>
+                        <label>设备编码<input v-model.trim="aiForm.deviceCode" type="text" placeholder="例如：CAM-001"></label>
+                        <button class="primary-button" type="submit" :disabled="analyzing">{{ analyzing ? '识别中…' : '开始识别' }}</button>
+                    </form>
+                    <p v-if="lastAiResult" class="ai-result">{{ lastAiResult }}</p>
+                    <div v-if="aiAnnotated" class="ai-annotated"><img :src="'data:image/jpeg;base64,' + aiAnnotated" alt="识别标注图"></div>
+                    <div v-if="videoResult" class="video-result"><div class="video-frames"><figure v-for="frame in videoResult.frames" :key="frame.frame" class="video-frame"><img :src="'data:image/jpeg;base64,' + frame.annotated" :alt="'第 ' + frame.frame + ' 帧'"><figcaption>第 {{ frame.frame }} 帧<template v-if="frame.objects.length">：{{ frame.objects.map(obj => obj.class + ' ' + (obj.conf * 100).toFixed(1) + '%').join('、') }}</template><template v-else>：未识别到目标</template></figcaption></figure></div></div>
+                </article>
+
+                <div class="filter-bar panel" aria-label="AI识别记录筛选">
+                    <label>类型<select v-model="filters.ai.type"><option value="">全部类型</option><option v-for="value in filterOptions.types" :key="value">{{ value }}</option></select></label>
+                    <label>区域<select v-model="filters.ai.area"><option value="">全部区域</option><option v-for="value in filterOptions.areas" :key="value">{{ value }}</option></select></label>
+                    <label>等级<select v-model="filters.ai.level"><option value="">全部等级</option><option v-for="value in filterOptions.levels" :key="value">{{ value }}</option></select></label>
+                    <label>状态<select v-model="filters.ai.status"><option value="">全部状态</option><option v-for="value in filterOptions.statuses" :key="value">{{ value }}</option></select></label>
+                    <button class="secondary-button" type="button" @click="clearFilters('ai')">重置筛选</button><span class="filter-count">{{ aiAlarms.length }} 条结果</span>
+                </div>
+                <article class="panel table-panel"><div class="table-wrap"><table>
+                    <thead><tr>
+                        <th :aria-sort="ariaSort('ai','eventTime')"><button class="sort-button" @click="toggleSort('ai','eventTime')">识别时间 {{ sortMark('ai','eventTime') }}</button></th>
+                        <th :aria-sort="ariaSort('ai','type')"><button class="sort-button" @click="toggleSort('ai','type')">告警类型 {{ sortMark('ai','type') }}</button></th>
+                        <th :aria-sort="ariaSort('ai','area')"><button class="sort-button" @click="toggleSort('ai','area')">区域 {{ sortMark('ai','area') }}</button></th>
+                        <th :aria-sort="ariaSort('ai','detail')"><button class="sort-button" @click="toggleSort('ai','detail')">置信结果 {{ sortMark('ai','detail') }}</button></th>
+                        <th :aria-sort="ariaSort('ai','level')"><button class="sort-button" @click="toggleSort('ai','level')">等级 {{ sortMark('ai','level') }}</button></th>
+                        <th :aria-sort="ariaSort('ai','status')"><button class="sort-button" @click="toggleSort('ai','status')">状态 {{ sortMark('ai','status') }}</button></th>
+                    </tr></thead>
+                    <tbody><tr v-for="alarm in aiAlarms" :key="alarm.id"><td>{{ formatTime(alarm.eventTime) }}</td><td>{{ alarm.type }}</td><td>{{ alarm.area }}</td><td class="detail-cell" :title="alarm.detail">{{ alarm.detail }}</td><td><span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span></td><td>{{ alarm.status }}</td></tr><tr v-if="!aiAlarms.length"><td colspan="6" class="empty-state">没有符合条件的 AI 识别记录</td></tr></tbody>
+                </table></div></article>
+            </section>
+
+            <section v-show="activePage === 'alerts'" class="page">
+                <div class="page-heading"><div><h2>实时告警中心</h2><p>待处置和处置中的告警会通过 WebSocket 实时刷新</p></div></div>
+                <div class="filter-bar panel" aria-label="实时告警筛选">
+                    <label>类型<select v-model="filters.alerts.type"><option value="">全部类型</option><option v-for="value in filterOptions.types" :key="value">{{ value }}</option></select></label>
+                    <label>区域<select v-model="filters.alerts.area"><option value="">全部区域</option><option v-for="value in filterOptions.areas" :key="value">{{ value }}</option></select></label>
+                    <label>等级<select v-model="filters.alerts.level"><option value="">全部等级</option><option v-for="value in filterOptions.levels" :key="value">{{ value }}</option></select></label>
+                    <label>状态<select v-model="filters.alerts.status"><option value="">全部状态</option><option v-for="value in filterOptions.statuses" :key="value">{{ value }}</option></select></label>
+                    <button class="secondary-button" type="button" @click="clearFilters('alerts')">重置筛选</button><span class="filter-count">{{ activeAlarms.length }} 条结果</span>
+                </div>
+                <article class="panel table-panel"><div class="table-wrap"><table>
+                    <thead><tr><th>现场</th>
+                        <th :aria-sort="ariaSort('alerts','eventTime')"><button class="sort-button" @click="toggleSort('alerts','eventTime')">告警时间 {{ sortMark('alerts','eventTime') }}</button></th>
+                        <th :aria-sort="ariaSort('alerts','type')"><button class="sort-button" @click="toggleSort('alerts','type')">类型 {{ sortMark('alerts','type') }}</button></th>
+                        <th :aria-sort="ariaSort('alerts','area')"><button class="sort-button" @click="toggleSort('alerts','area')">区域 {{ sortMark('alerts','area') }}</button></th>
+                        <th :aria-sort="ariaSort('alerts','level')"><button class="sort-button" @click="toggleSort('alerts','level')">等级 {{ sortMark('alerts','level') }}</button></th>
+                        <th :aria-sort="ariaSort('alerts','status')"><button class="sort-button" @click="toggleSort('alerts','status')">状态 {{ sortMark('alerts','status') }}</button></th><th>详情</th><th>操作</th>
+                    </tr></thead>
+                    <tbody><tr v-for="alarm in activeAlarms" :key="alarm.id" :class="{ 'alarm-highlight': alarm.id === highlightAlarmId }"><td><img v-if="alarm.imagePath" class="table-thumbnail" :src="alarm.imagePath" :alt="alarm.type" loading="lazy"><span v-else class="image-empty">无</span></td><td>{{ formatTime(alarm.eventTime) }}</td><td>{{ alarm.type }}</td><td>{{ alarm.area }}</td><td><span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span></td><td><span class="process-status" :class="{ processing: alarm.status === '处置中' }">{{ alarm.status }}</span></td><td class="detail-cell" :title="alarm.detail">{{ alarm.detail }}</td><td class="action-cell"><button v-if="alarm.status === '待处置'" type="button" @click="updateAlarm(alarm.id, '处置中')">开始处置</button><button class="close-button" type="button" @click="updateAlarm(alarm.id, '已关闭')">关闭告警</button></td></tr><tr v-if="!activeAlarms.length"><td colspan="8" class="empty-state">没有符合条件的实时告警</td></tr></tbody>
+                </table></div></article>
+            </section>
+
+            <section v-show="activePage === 'history'" class="page">
+                <div class="page-heading"><div><h2>告警处置记录</h2><p>已关闭告警的历史处置结果</p></div></div>
+                <div class="filter-bar panel" aria-label="告警处置记录筛选">
+                    <label>类型<select v-model="filters.history.type"><option value="">全部类型</option><option v-for="value in filterOptions.types" :key="value">{{ value }}</option></select></label>
+                    <label>区域<select v-model="filters.history.area"><option value="">全部区域</option><option v-for="value in filterOptions.areas" :key="value">{{ value }}</option></select></label>
+                    <label>等级<select v-model="filters.history.level"><option value="">全部等级</option><option v-for="value in filterOptions.levels" :key="value">{{ value }}</option></select></label>
+                    <label>状态<select v-model="filters.history.status"><option value="">全部状态</option><option v-for="value in filterOptions.statuses" :key="value">{{ value }}</option></select></label>
+                    <button class="secondary-button" type="button" @click="clearFilters('history')">重置筛选</button><span class="filter-count">{{ closedAlarms.length }} 条结果</span>
+                </div>
+                <article class="panel table-panel"><div class="table-wrap"><table>
+                    <thead><tr><th>现场</th>
+                        <th :aria-sort="ariaSort('history','eventTime')"><button class="sort-button" @click="toggleSort('history','eventTime')">告警时间 {{ sortMark('history','eventTime') }}</button></th>
+                        <th :aria-sort="ariaSort('history','type')"><button class="sort-button" @click="toggleSort('history','type')">类型 {{ sortMark('history','type') }}</button></th>
+                        <th :aria-sort="ariaSort('history','area')"><button class="sort-button" @click="toggleSort('history','area')">区域 {{ sortMark('history','area') }}</button></th>
+                        <th :aria-sort="ariaSort('history','level')"><button class="sort-button" @click="toggleSort('history','level')">等级 {{ sortMark('history','level') }}</button></th>
+                        <th :aria-sort="ariaSort('history','status')"><button class="sort-button" @click="toggleSort('history','status')">状态 {{ sortMark('history','status') }}</button></th><th>详情</th>
+                    </tr></thead>
+                    <tbody><tr v-for="alarm in closedAlarms" :key="alarm.id"><td><img v-if="alarm.imagePath" class="table-thumbnail" :src="alarm.imagePath" :alt="alarm.type" loading="lazy"><span v-else class="image-empty">无</span></td><td>{{ formatTime(alarm.eventTime) }}</td><td>{{ alarm.type }}</td><td>{{ alarm.area }}</td><td><span class="level-tag" :class="levelClass(alarm.level)">{{ alarm.level }}</span></td><td><span class="closed-status">{{ alarm.status }}</span></td><td class="detail-cell" :title="alarm.detail">{{ alarm.detail }}</td></tr><tr v-if="!closedAlarms.length"><td colspan="7" class="empty-state">没有符合条件的处置记录</td></tr></tbody>
+                </table></div></article>
+            </section>
+
+            <p v-if="error" class="error-message" role="alert">{{ error }}</p>
+        </main>
+        <div v-if="toast" class="toast" role="status"><span>{{ toast }}</span><button v-if="toastAlarmId" class="toast-link" type="button" @click="goToAlarm">立即处置 →</button></div>
+    </template>
 </div>
 <script src="js/app.js"></script>
 </body>

@@ -68,6 +68,30 @@ public class AiVisionService {
         return new AiAnalyzeResponse(objects, result.alarms(), annotated);
     }
 
+    public AiAnalyzeResponse analyzeImage(MultipartFile file, String area, String deviceCode) {
+        LinkedMultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("file", file.getResource());
+
+        final AiDetectionResponse detection;
+        try {
+            detection = restClient.post()
+                    .uri("/detect/upload")
+                    .contentType(MediaType.MULTIPART_FORM_DATA)
+                    .body(body)
+                    .retrieve()
+                    .body(AiDetectionResponse.class);
+        } catch (RestClientException e) {
+            throw new IllegalStateException("AI识别服务不可用，请先启动 ai-service/server.py", e);
+        }
+
+        List<AiDetectionObject> objects = detection == null ? List.of() : detection.objects();
+        String annotated = detection == null ? null : detection.annotated();
+        AlarmRuleMapper.MappingResult result = alarmService.createFromDetections(
+                objects, area, deviceCode, file.getOriginalFilename(), annotated
+        );
+        return new AiAnalyzeResponse(objects, result.alarms(), annotated);
+    }
+
     public AiVideoResponse analyzeVideo(MultipartFile file, String area, String deviceCode) {
         LinkedMultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
         body.add("file", file.getResource());

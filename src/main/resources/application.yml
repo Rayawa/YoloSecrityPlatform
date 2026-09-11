@@ -1,19 +1,45 @@
 server:
   port: ${SERVER_PORT:423}
+  shutdown: graceful
+  compression:
+    enabled: true
+    min-response-size: 1024
+  servlet:
+    session:
+      timeout: 8h
+      cookie:
+        http-only: true
+        same-site: lax
 
 mybatis-plus:
   configuration:
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+    log-impl: ${MYBATIS_LOG_IMPL:org.apache.ibatis.logging.nologging.NoLoggingImpl}
 
 spring:
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+  servlet:
+    multipart:
+      max-file-size: 50MB
+      max-request-size: 52MB
   datasource:
     username: ${DB_USERNAME:root}
     password: ${DB_PASSWORD:root}
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:security_monitor}?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+    hikari:
+      maximum-pool-size: 8
+      minimum-idle: 2
+      connection-timeout: 5000
+      validation-timeout: 2000
 
 ai:
   service-url: ${AI_SERVICE_URL:http://127.0.0.1:8000}
+  event-token: ${AI_EVENT_TOKEN:local-ai-event-token}
+
+auth:
+  # Demo 分享链接口令；正式部署请通过 AUTH_SHARE_TOKEN 覆盖。
+  share-token: ${AUTH_SHARE_TOKEN:yolo-demo-share-2026}
 
 alarm:
   # 告警标注图落盘目录（相对运行目录），通过 /uploads/** 对外提供访问
