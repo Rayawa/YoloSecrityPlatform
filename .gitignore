@@ -10,3 +10,14 @@ ai-service/runs/
 logs/
 uploads/
 /ai-service/ai-watch/
+
+.hvigor
+.idea
+oh_modules
+.DS_Store
+
+build
+oh_modules
+#build-profile.json5
+
+.lh

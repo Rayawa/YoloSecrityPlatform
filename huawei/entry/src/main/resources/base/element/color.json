@@ -1,0 +1,20 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "light_color",
+      "value": "#33E5E5E5"
+    },
+    {
+      "name": "button_border",
+      "value": "#FFFFFF"
+    },
+    {
+      "name": "backcolor",
+      "value": "#EEF6FE"
+    }
+  ]
+}
